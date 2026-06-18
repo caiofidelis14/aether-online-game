@@ -4,14 +4,20 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs';
 import { resolve, extname, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { createHash, createHmac, randomBytes } from 'crypto';
+import pg from 'pg';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const DIST = resolve(__dir, '../dist');
 
-// ── Persistent data dir (Fly.io volume at /data, else ./data) ────────────────
+// ── Persistent data dir (fallback file storage) ───────────────────────────────
 const DATA_DIR = existsSync('/data') ? '/data' : resolve(__dir, '../data');
 try { mkdirSync(DATA_DIR, { recursive: true }); } catch {}
 const ACCOUNTS_FILE = resolve(DATA_DIR, 'accounts.json');
+
+// ── PostgreSQL pool (optional — set DATABASE_URL env var) ─────────────────────
+const pool = process.env.DATABASE_URL
+  ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 })
+  : null;
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -69,14 +75,53 @@ function getAuthUser(req) {
 // Backward-compat alias (used in login/register)
 const createSession = createToken;
 
-// ── Account storage ───────────────────────────────────────────────────────────
+// ── Account storage (in-memory cache + optional PostgreSQL) ──────────────────
+let _accountsCache = null;
+
+async function initStorage() {
+  if (pool) {
+    try {
+      await pool.query(`CREATE TABLE IF NOT EXISTS accounts (key TEXT PRIMARY KEY, data JSONB NOT NULL)`);
+      const { rows } = await pool.query('SELECT key, data FROM accounts');
+      _accountsCache = Object.fromEntries(rows.map(r => [r.key, r.data]));
+      console.log(`[DB] PostgreSQL: loaded ${rows.length} accounts`);
+    } catch (e) {
+      console.error('[DB] PostgreSQL init failed, falling back to file:', e.message);
+      _accountsCache = null;
+    }
+  }
+  if (_accountsCache === null) {
+    try { _accountsCache = JSON.parse(readFileSync(ACCOUNTS_FILE, 'utf8')); }
+    catch { _accountsCache = {}; }
+    console.log(`[DB] File storage: ${Object.keys(_accountsCache).length} accounts`);
+  }
+}
+
 function loadAccounts() {
-  try { return JSON.parse(readFileSync(ACCOUNTS_FILE, 'utf8')); }
-  catch { return {}; }
+  return _accountsCache || {};
 }
 
 function saveAccounts(accounts) {
-  writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts));
+  _accountsCache = accounts;
+  if (pool) {
+    pool.connect().then(async client => {
+      try {
+        await client.query('BEGIN');
+        for (const [key, data] of Object.entries(accounts)) {
+          await client.query(
+            'INSERT INTO accounts (key,data) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET data=$2',
+            [key, JSON.stringify(data)]
+          );
+        }
+        await client.query('COMMIT');
+      } catch (e) {
+        await client.query('ROLLBACK');
+        console.error('[DB] Save error:', e.message);
+      } finally { client.release(); }
+    }).catch(e => console.error('[DB] Connect error:', e.message));
+  } else {
+    writeFileSync(ACCOUNTS_FILE, JSON.stringify(accounts));
+  }
 }
 
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -125,7 +170,7 @@ const httpServer = createServer(async (req, res) => {
   // ── POST /api/register ───────────────────────────────────────────────────
   if (req.method === 'POST' && path === '/api/register') {
     const body = await readBody(req);
-    const username = String(body.username || '').trim().slice(0, 24);
+    const username = String(body.username || '').trim().slice(0, 50);
     const password = String(body.password || '');
     const importSaves = Array.isArray(body.importSaves) ? body.importSaves.slice(0, 10) : [];
 
@@ -432,11 +477,13 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n╔════════════════════════════════════════╗`);
-  console.log(`║    Aether Online Multiplayer Server    ║`);
-  console.log(`╠════════════════════════════════════════╣`);
-  console.log(`║  HTTP  : http://localhost:${PORT}          ║`);
-  console.log(`║  Data  : ${DATA_DIR.slice(0, 30).padEnd(30)} ║`);
-  console.log(`╚════════════════════════════════════════╝\n`);
+initStorage().then(() => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n╔════════════════════════════════════════╗`);
+    console.log(`║    Aether Online Multiplayer Server    ║`);
+    console.log(`╠════════════════════════════════════════╣`);
+    console.log(`║  HTTP  : http://localhost:${PORT}          ║`);
+    console.log(`║  Store : ${(pool ? 'PostgreSQL' : DATA_DIR).slice(0, 30).padEnd(30)} ║`);
+    console.log(`╚════════════════════════════════════════╝\n`);
+  });
 });

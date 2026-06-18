@@ -126,7 +126,7 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
               onChange={e => setUsername(e.target.value)}
               onKeyDown={handleKey}
               placeholder="Seu usuário..."
-              maxLength={24}
+              maxLength={50}
               autoFocus
               style={{
                 width: '100%', padding: '12px 15px',
