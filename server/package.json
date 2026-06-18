@@ -1,0 +1,13 @@
+{
+  "name": "aether-online-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Aether Online Multiplayer Server",
+  "scripts": {
+    "start": "node server.mjs",
+    "dev": "node --watch server.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
