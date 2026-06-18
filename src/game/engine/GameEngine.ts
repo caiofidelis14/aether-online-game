@@ -11,7 +11,7 @@ export interface Monster3D {
   xp: number; gold: number; level: number; mesh: THREE.Group;
   pos: THREE.Vector3; speed: number; atk: number; def: number;
   aggroed: boolean; attackTimer: number; state: 'idle' | 'chase' | 'attack' | 'dead';
-  hitFlashTimer: number; deathTimer: number;
+  hitFlashTimer: number; deathTimer: number; chaseTimer: number;
 }
 
 export interface DmgNumber {
@@ -190,6 +190,7 @@ export class GameEngine {
   clock = new THREE.Clock(); sun!: THREE.DirectionalLight;
   ambient!: THREE.AmbientLight; hemi!: THREE.HemisphereLight;
   streetLights: THREE.PointLight[] = []; playerLight!: THREE.PointLight;
+  cityGroup!: THREE.Group;
   playerSkills: Record<string, number> = {}; playerSP = 3;
   playerMesh!: THREE.Group; playerPos = new THREE.Vector3(0, 0, 0);
   playerTarget = new THREE.Vector3(0, 0, 0); playerMoving = false;
@@ -224,6 +225,8 @@ export class GameEngine {
   portalMeshes: { mesh: THREE.Group; time: number; color: number }[] = [];
   lavaParticles: THREE.Points | null = null;
   snowParticles: THREE.Points | null = null;
+  rainParticles: THREE.Points | null = null;
+  sandParticles: THREE.Points | null = null;
 
   // Camera
   camDist = CAM_DIST_DEFAULT;
@@ -367,6 +370,7 @@ export class GameEngine {
 
   // ── CITY ──────────────────────────────────────────────────────────────────
   buildCity() {
+    this.cityGroup = new THREE.Group(); this.scene.add(this.cityGroup);
     // Ground
     const tGeo = new THREE.PlaneGeometry(320, 320, 64, 64); tGeo.rotateX(-Math.PI / 2);
     const vPos = tGeo.attributes.position;
@@ -380,14 +384,14 @@ export class GameEngine {
 
     // City plaza
     const plaza = new THREE.Mesh(new THREE.PlaneGeometry(70, 70), new THREE.MeshLambertMaterial({ color: 0xb8a888 }));
-    plaza.rotation.x = -Math.PI / 2; plaza.position.y = 0.01; plaza.receiveShadow = true; this.scene.add(plaza);
+    plaza.rotation.x = -Math.PI / 2; plaza.position.y = 0.01; plaza.receiveShadow = true; this.cityGroup.add(plaza);
 
     // Stone paths
     [[0, 0, 80, 3.5, true], [0, 0, 80, 3.5, false]].forEach(([ox, oz, len, w, h]) => {
       const g = h ? new THREE.PlaneGeometry(len as number, w as number) : new THREE.PlaneGeometry(w as number, len as number);
       g.rotateX(-Math.PI / 2);
       const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0x9e8866 }));
-      m.position.set(ox as number, 0.02, oz as number); m.receiveShadow = true; this.scene.add(m);
+      m.position.set(ox as number, 0.02, oz as number); m.receiveShadow = true; this.cityGroup.add(m);
     });
 
     // Water
@@ -399,7 +403,7 @@ export class GameEngine {
     this.buildCityBuildings();
     this.buildCityPortals();
     this.buildCityNPCs();
-    this.buildNatureTrees(0, 0, 50, 130, 70, 0x2d7a2d, 'round');
+    this.buildNatureTrees(0, 0, 50, 130, 70, 0x2d7a2d, 'round', this.cityGroup);
     this.buildMountains();
     this.buildSky();
     this.initQuests();
@@ -413,7 +417,7 @@ export class GameEngine {
     // ── City walls ────────────────────────────────────────────────────────────
     [[0,-32,64,1.5,4],[0,32,64,1.5,4],[-32,0,1.5,64,4],[32,0,1.5,64,4]].forEach(([x,z,w,d,h]) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshLambertMaterial({ color:0x6a5a4a }));
-      m.position.set(x,h/2,z); m.castShadow=true; m.receiveShadow=true; this.scene.add(m);
+      m.position.set(x,h/2,z); m.castShadow=true; m.receiveShadow=true; this.cityGroup.add(m);
       const c = { minX:(x as number)-(w as number)/2, maxX:(x as number)+(w as number)/2, minZ:(z as number)-(d as number)/2, maxZ:(z as number)+(d as number)/2 };
       this.colliders.push(c); this.cityColliders.push(c);
     });
@@ -426,19 +430,19 @@ export class GameEngine {
     for (let i = 0; i < 8; i++) {
       const a = (i / 8) * Math.PI * 2; const r = 5.5;
       const stone = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.35, 0.6, 6), new THREE.MeshLambertMaterial({ color: 0xb0a090 }));
-      stone.position.set(Math.cos(a)*r, 0.3, Math.sin(a)*r); this.scene.add(stone);
+      stone.position.set(Math.cos(a)*r, 0.3, Math.sin(a)*r); this.cityGroup.add(stone);
     }
 
     // ── Named Buildings ───────────────────────────────────────────────────────
     // Taverna (SW) — warm amber glow
     this.addBuilding(-18, 14, 7, 7, 6, 0xa0600a, 'tavern');
     const tavSign = new THREE.Mesh(new THREE.BoxGeometry(4, 0.8, 0.1), new THREE.MeshLambertMaterial({ color: 0xcc8822, emissive: 0x884400, emissiveIntensity: 0.5 }));
-    tavSign.position.set(-18, 8, 11.1); this.scene.add(tavSign);
-    const tavLight = new THREE.PointLight(0xffaa44, 2, 10); tavLight.position.set(-18, 5, 11); this.scene.add(tavLight); this.streetLights.push(tavLight);
+    tavSign.position.set(-18, 8, 11.1); this.cityGroup.add(tavSign);
+    const tavLight = new THREE.PointLight(0xffaa44, 2, 10); tavLight.position.set(-18, 5, 11); this.cityGroup.add(tavLight); this.streetLights.push(tavLight);
 
     // Banco/Guild (SE) — stone blue
     this.addBuilding(18, 14, 7, 7, 6, 0x4a5a8a, 'bank');
-    const bankLight = new THREE.PointLight(0x4488ff, 1.5, 8); bankLight.position.set(18, 5, 11); this.scene.add(bankLight); this.streetLights.push(bankLight);
+    const bankLight = new THREE.PointLight(0x4488ff, 1.5, 8); bankLight.position.set(18, 5, 11); this.cityGroup.add(bankLight); this.streetLights.push(bankLight);
 
     // Arena (NE) — coliseum style
     this.addArena(20, -16);
@@ -446,8 +450,8 @@ export class GameEngine {
     // Mage Tower (NW)
     this.addTower(-22, -18, 3, 16, 0x4a2a8a);
     const towerOrb = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 10), new THREE.MeshLambertMaterial({ color: 0x9b59b6, emissive: 0x9b59b6, emissiveIntensity: 1.2 }));
-    towerOrb.position.set(-22, 17, -18); this.scene.add(towerOrb);
-    const towerLight = new THREE.PointLight(0x9b59b6, 2.5, 12); towerLight.position.set(-22, 17, -18); this.scene.add(towerLight); this.streetLights.push(towerLight);
+    towerOrb.position.set(-22, 17, -18); this.cityGroup.add(towerOrb);
+    const towerLight = new THREE.PointLight(0x9b59b6, 2.5, 12); towerLight.position.set(-22, 17, -18); this.cityGroup.add(towerLight); this.streetLights.push(towerLight);
 
     // Houses
     [
@@ -466,9 +470,9 @@ export class GameEngine {
 
     // ── Trees lining the roads ────────────────────────────────────────────────
     for (let i = -3; i <= 3; i++) {
-      this.buildTree(i * 5.5 + 2.5, -13.5, 0.55, 0x2a6a18, 'round');
-      this.buildTree(i * 5.5 + 2.5, 13.5, 0.55, 0x2a6a18, 'round');
-      if (i !== 0) { this.buildTree(-14, i * 6, 0.5, 0x2a6a18, 'round'); this.buildTree(14, i * 6, 0.5, 0x2a6a18, 'round'); }
+      this.buildTree(i * 5.5 + 2.5, -13.5, 0.55, 0x2a6a18, 'round', this.cityGroup);
+      this.buildTree(i * 5.5 + 2.5, 13.5, 0.55, 0x2a6a18, 'round', this.cityGroup);
+      if (i !== 0) { this.buildTree(-14, i * 6, 0.5, 0x2a6a18, 'round', this.cityGroup); this.buildTree(14, i * 6, 0.5, 0x2a6a18, 'round', this.cityGroup); }
     }
   }
 
@@ -479,20 +483,20 @@ export class GameEngine {
       const a = (i / 12) * Math.PI * 2; const r = 5;
       const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 4.5, 6), mat);
       pillar.position.set(x + Math.cos(a)*r, 2.25, z + Math.sin(a)*r);
-      pillar.castShadow = true; this.scene.add(pillar);
+      pillar.castShadow = true; this.cityGroup.add(pillar);
     }
     // Arena floor
     const floor = new THREE.Mesh(new THREE.CircleGeometry(4.5, 24), new THREE.MeshLambertMaterial({ color: 0xd4b880 }));
-    floor.rotation.x = -Math.PI/2; floor.position.set(x, 0.02, z); floor.receiveShadow = true; this.scene.add(floor);
+    floor.rotation.x = -Math.PI/2; floor.position.set(x, 0.02, z); floor.receiveShadow = true; this.cityGroup.add(floor);
     // Roof ring beam
     const roof = new THREE.Mesh(new THREE.TorusGeometry(5, 0.3, 6, 24), mat);
-    roof.position.set(x, 4.6, z); this.scene.add(roof);
+    roof.position.set(x, 4.6, z); this.cityGroup.add(roof);
     // Center torch
     const torch = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 1.5, 6), new THREE.MeshLambertMaterial({ color: 0x5a3000 }));
-    torch.position.set(x, 0.75, z); this.scene.add(torch);
+    torch.position.set(x, 0.75, z); this.cityGroup.add(torch);
     const flame = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 8), new THREE.MeshLambertMaterial({ color: 0xff8800, emissive: 0xff4400, emissiveIntensity: 1.5 }));
-    flame.position.set(x, 1.7, z); this.scene.add(flame);
-    const arenaLight = new THREE.PointLight(0xff8800, 3, 12); arenaLight.position.set(x, 2, z); this.scene.add(arenaLight); this.streetLights.push(arenaLight);
+    flame.position.set(x, 1.7, z); this.cityGroup.add(flame);
+    const arenaLight = new THREE.PointLight(0xff8800, 3, 12); arenaLight.position.set(x, 2, z); this.cityGroup.add(arenaLight); this.streetLights.push(arenaLight);
     // Collider
     const bc = { minX: x-5.5, maxX: x+5.5, minZ: z-5.5, maxZ: z+5.5 };
     this.colliders.push(bc); this.cityColliders.push(bc);
@@ -572,7 +576,7 @@ export class GameEngine {
       labelMesh.position.set(0, 7.8, 0); group.add(labelMesh);
 
       group.position.set(x, 0, z);
-      this.scene.add(group); this.buildings.push(group);
+      this.cityGroup.add(group); this.buildings.push(group);
       this.portalMeshes.push({ mesh: group, time: i * 0.7, color: col });
 
       const entry = { pos: new THREE.Vector3(x, 0, z), type: 'portal' as const, label: `⚡ Portal: ${zoneDef.name} — Pressione F`, zone: zoneId, mesh: group };
@@ -583,17 +587,17 @@ export class GameEngine {
   buildCityNPCs() {
     // Interactive NPCs
     const shopMesh = this.buildNPCMesh(0xf4c2a0, 0x3498db); shopMesh.position.set(-15, 0, -15);
-    this.scene.add(shopMesh);
+    this.cityGroup.add(shopMesh);
     const shopEntry = { pos: new THREE.Vector3(-15, 0, -15), type: 'shop' as const, label: '🏪 Loja do Mercador', mesh: shopMesh };
     this.interactables.push(shopEntry); this.cityInteractables.push(shopEntry);
 
     const chest = this.buildChestMesh(); chest.position.set(15, 0, -15);
-    this.scene.add(chest);
+    this.cityGroup.add(chest);
     const chestEntry = { pos: new THREE.Vector3(15, 0, -15), type: 'chest' as const, label: '📦 Baú de Inventário', mesh: chest };
     this.interactables.push(chestEntry); this.cityInteractables.push(chestEntry);
 
     const blacksmith = this.buildNPCMesh(0xcc9966, 0xe74c3c); blacksmith.position.set(15, 0, 15);
-    this.scene.add(blacksmith);
+    this.cityGroup.add(blacksmith);
     const smithEntry = { pos: new THREE.Vector3(15, 0, 15), type: 'blacksmith' as const, label: '⚒️ Ferreiro', mesh: blacksmith };
     this.interactables.push(smithEntry); this.cityInteractables.push(smithEntry);
 
@@ -618,7 +622,7 @@ export class GameEngine {
       const mesh = this.buildNPCMesh(def.skin, def.cloth);
       const pos = new THREE.Vector3(def.hx, 0, def.hz);
       mesh.position.copy(pos);
-      this.scene.add(mesh);
+      this.cityGroup.add(mesh);
       const target = new THREE.Vector3(def.hx + (Math.random() - 0.5) * def.range, 0, def.hz + (Math.random() - 0.5) * def.range);
       this.npcWalkers.push({ mesh, pos: pos.clone(), target, speed: 1.2 + Math.random() * 0.8, waitTimer: Math.random() * 3, walkAnim: 0, homeX: def.hx, homeZ: def.hz, range: def.range });
     }
@@ -700,40 +704,40 @@ export class GameEngine {
     const winMat = new THREE.MeshLambertMaterial({ color: 0xffffcc, emissive: 0xffee88, emissiveIntensity: 0.35 });
     const win1 = new THREE.Mesh(new THREE.BoxGeometry(w * 0.2, h * 0.22, 0.1), winMat); win1.position.set(-w * 0.27, h * 0.6, d / 2 + 0.05); g.add(win1);
     const win2 = win1.clone(); win2.position.x = w * 0.27; g.add(win2);
-    g.position.set(x, 0, z); this.scene.add(g); this.buildings.push(g);
+    g.position.set(x, 0, z); this.cityGroup.add(g); this.buildings.push(g);
     const bc = { minX: x - w / 2 - 0.5, maxX: x + w / 2 + 0.5, minZ: z - d / 2 - 0.5, maxZ: z + d / 2 + 0.5 };
     this.colliders.push(bc); this.cityColliders.push(bc);
   }
 
   addTower(x: number, z: number, r: number, h: number, color: number) {
     const mat = new THREE.MeshLambertMaterial({ color });
-    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.25, h, 8), mat); cyl.position.set(x, h / 2, z); cyl.castShadow = true; cyl.receiveShadow = true; this.scene.add(cyl);
-    const cap = new THREE.Mesh(new THREE.ConeGeometry(r * 1.2, h * 0.45, 8), new THREE.MeshLambertMaterial({ color: 0x8b0000 })); cap.position.set(x, h + h * 0.22, z); cap.castShadow = true; this.scene.add(cap);
+    const cyl = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 1.25, h, 8), mat); cyl.position.set(x, h / 2, z); cyl.castShadow = true; cyl.receiveShadow = true; this.cityGroup.add(cyl);
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(r * 1.2, h * 0.45, 8), new THREE.MeshLambertMaterial({ color: 0x8b0000 })); cap.position.set(x, h + h * 0.22, z); cap.castShadow = true; this.cityGroup.add(cap);
   }
 
   addFountain(x: number, z: number) {
     const mat = new THREE.MeshLambertMaterial({ color: 0xc8c0b0 });
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.2, 0.5, 18), mat); base.position.set(x, 0.25, z); base.castShadow = true; this.scene.add(base);
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.2, 0.5, 18), mat); base.position.set(x, 0.25, z); base.castShadow = true; this.cityGroup.add(base);
     const wm = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 0.22, 18), new THREE.MeshPhongMaterial({ color: 0x3399ff, transparent: true, opacity: 0.72 }));
-    wm.position.set(x, 0.61, z); this.scene.add(wm);
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 2.8, 8), mat); pole.position.set(x, 1.9, z); this.scene.add(pole);
-    const top = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 8), new THREE.MeshLambertMaterial({ color: 0xffd700, emissive: 0xffaa00, emissiveIntensity: 0.5 })); top.position.set(x, 3.4, z); this.scene.add(top);
-    const pl = new THREE.PointLight(0x44aaff, 1.8, 12); pl.position.set(x, 2.5, z); this.scene.add(pl); this.streetLights.push(pl);
+    wm.position.set(x, 0.61, z); this.cityGroup.add(wm);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 2.8, 8), mat); pole.position.set(x, 1.9, z); this.cityGroup.add(pole);
+    const top = new THREE.Mesh(new THREE.SphereGeometry(0.32, 8, 8), new THREE.MeshLambertMaterial({ color: 0xffd700, emissive: 0xffaa00, emissiveIntensity: 0.5 })); top.position.set(x, 3.4, z); this.cityGroup.add(top);
+    const pl = new THREE.PointLight(0x44aaff, 1.8, 12); pl.position.set(x, 2.5, z); this.cityGroup.add(pl); this.streetLights.push(pl);
   }
 
   addLamp(x: number, z: number) {
     const poleMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 3.2, 6), poleMat); pole.position.set(x, 1.6, z); pole.castShadow = true; this.scene.add(pole);
-    const globe = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 8), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffeeaa, emissiveIntensity: 1.2 })); globe.position.set(x, 3.3, z); this.scene.add(globe);
-    const pl = new THREE.PointLight(0xffdd88, 1.4, 9); pl.position.set(x, 3.1, z); this.scene.add(pl); this.streetLights.push(pl);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 3.2, 6), poleMat); pole.position.set(x, 1.6, z); pole.castShadow = true; this.cityGroup.add(pole);
+    const globe = new THREE.Mesh(new THREE.SphereGeometry(0.24, 8, 8), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffeeaa, emissiveIntensity: 1.2 })); globe.position.set(x, 3.3, z); this.cityGroup.add(globe);
+    const pl = new THREE.PointLight(0xffdd88, 1.4, 9); pl.position.set(x, 3.1, z); this.cityGroup.add(pl); this.streetLights.push(pl);
   }
 
   addStall(x: number, z: number, color: number) {
     const wood = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
-    const table = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.1, 1.6), wood); table.position.set(x, 0.7, z); table.castShadow = true; this.scene.add(table);
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.08, 1.9), new THREE.MeshLambertMaterial({ color })); roof.position.set(x, 2.1, z); this.scene.add(roof);
+    const table = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.1, 1.6), wood); table.position.set(x, 0.7, z); table.castShadow = true; this.cityGroup.add(table);
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.08, 1.9), new THREE.MeshLambertMaterial({ color })); roof.position.set(x, 2.1, z); this.cityGroup.add(roof);
     for (const dx of [-1.45, 1.45]) {
-      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.1, 4), wood); p.position.set(x + dx, 1.05, z - 0.85); this.scene.add(p);
+      const p = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.1, 4), wood); p.position.set(x + dx, 1.05, z - 0.85); this.cityGroup.add(p);
     }
   }
 
@@ -759,6 +763,8 @@ export class GameEngine {
     // Remove atmosphere particles
     if (this.lavaParticles) { this.scene.remove(this.lavaParticles); this.lavaParticles = null; }
     if (this.snowParticles) { this.scene.remove(this.snowParticles); this.snowParticles = null; }
+    if (this.rainParticles) { this.scene.remove(this.rainParticles); this.rainParticles = null; }
+    if (this.sandParticles) { this.scene.remove(this.sandParticles); this.sandParticles = null; }
     // Reset portal cooldown so player doesn't immediately re-enter
     this.portalCooldown = 4;
     this.currentZone = zoneId;
@@ -770,15 +776,13 @@ export class GameEngine {
     this.sun.color.set(def.sunColor);
     if (zoneId === 'city') {
       this.playerPos.set(0, 0, 10);
-      for (const b of this.buildings) b.visible = true;
+      this.cityGroup.visible = true;
       for (const i of this.cityInteractables) i.mesh.visible = true;
-      for (const npc of this.npcWalkers) npc.mesh.visible = true;
       this.waterMesh.visible = true; this.terrain.visible = true;
       this.colliders = [...this.cityColliders]; // restore city walls
     } else {
-      for (const b of this.buildings) b.visible = false;
+      this.cityGroup.visible = false;
       for (const i of this.cityInteractables) i.mesh.visible = false;
-      for (const npc of this.npcWalkers) npc.mesh.visible = false;
       this.waterMesh.visible = false;
       this.colliders = []; // no invisible walls in zones
       this.playerPos.set(0, 0, 8);
@@ -787,6 +791,8 @@ export class GameEngine {
       this.buildReturnPortal();
       if (zoneId === 'volcano') this.buildLavaParticles();
       if (zoneId === 'ice') this.buildSnowParticles();
+      if (zoneId === 'forest') this.buildRainParticles();
+      if (zoneId === 'desert') this.buildSandParticles();
     }
     this.playerMesh.position.copy(this.playerPos);
     this.playerTarget.copy(this.playerPos);
@@ -866,6 +872,39 @@ export class GameEngine {
     this.scene.add(this.snowParticles);
   }
 
+  buildRainParticles() {
+    const geo = new THREE.BufferGeometry();
+    const count = 500;
+    const pos = new Float32Array(count * 3);
+    const vel = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      pos[i*3] = (Math.random()-0.5)*80;
+      pos[i*3+1] = Math.random()*30;
+      pos[i*3+2] = (Math.random()-0.5)*80;
+      vel[i] = 8 + Math.random()*6;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    (geo as any).userData = { vel };
+    this.rainParticles = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xaaddff, size: 0.12, transparent: true, opacity: 0.6 }));
+    this.scene.add(this.rainParticles);
+    this.zoneObjects.push(this.rainParticles);
+  }
+
+  buildSandParticles() {
+    const geo = new THREE.BufferGeometry();
+    const count = 300;
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      pos[i*3] = (Math.random()-0.5)*100;
+      pos[i*3+1] = Math.random()*8;
+      pos[i*3+2] = (Math.random()-0.5)*100;
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    this.sandParticles = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xddaa44, size: 0.2, transparent: true, opacity: 0.5 }));
+    this.scene.add(this.sandParticles);
+    this.zoneObjects.push(this.sandParticles);
+  }
+
   spawnZoneMonsters(def: (typeof ZONES)[ZoneId], zoneId: ZoneId) {
     if (!def.monsters.length) return;
     const rng = zoneRng(zoneId);
@@ -883,7 +922,7 @@ export class GameEngine {
         xp: md.xp, gold: md.gold, level: md.level, mesh,
         pos: new THREE.Vector3(x, 0, z), speed: 2.5 + rng() * 1.5,
         atk: md.atk, def: md.def, aggroed: false, attackTimer: 0, state: 'idle',
-        hitFlashTimer: 0, deathTimer: 0,
+        hitFlashTimer: 0, deathTimer: 0, chaseTimer: 0,
       });
     }
     // Spawn 3 boss variants of the zone's strongest monster
@@ -904,22 +943,22 @@ export class GameEngine {
           xp: bossMd.xp * 8, gold: bossMd.gold * 6, level: bossMd.level + 5, mesh,
           pos: new THREE.Vector3(x, 0, z), speed: 3.5,
           atk: bossMd.atk * 2, def: bossMd.def * 2, aggroed: false, attackTimer: 0, state: 'idle',
-          hitFlashTimer: 0, deathTimer: 0,
+          hitFlashTimer: 0, deathTimer: 0, chaseTimer: 0,
         });
       }
     }
   }
 
-  buildNatureTrees(ox: number, oz: number, minDist: number, maxDist: number, count: number, color: number, style: string) {
+  buildNatureTrees(ox: number, oz: number, minDist: number, maxDist: number, count: number, color: number, style: string, parent?: THREE.Object3D) {
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2; const d = minDist + Math.random() * (maxDist - minDist);
       const x = ox + Math.cos(a) * d; const z = oz + Math.sin(a) * d;
-      const tree = this.buildTree(x, z, 0.6 + Math.random() * 0.9, color, style);
-      this.zoneObjects.push(tree);
+      const tree = this.buildTree(x, z, 0.6 + Math.random() * 0.9, color, style, parent);
+      if (!parent) this.zoneObjects.push(tree);
     }
   }
 
-  buildTree(x: number, z: number, scale: number, color: number, style: string): THREE.Group {
+  buildTree(x: number, z: number, scale: number, color: number, style: string, parent?: THREE.Object3D): THREE.Group {
     const g = new THREE.Group();
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18 * scale, 0.28 * scale, 1.6 * scale, 6), new THREE.MeshLambertMaterial({ color: 0x5d4037 }));
     trunk.position.y = 0.8 * scale; trunk.castShadow = true; g.add(trunk);
@@ -945,7 +984,7 @@ export class GameEngine {
         leaf.castShadow = true; g.add(leaf);
       }
     }
-    g.position.set(x, 0, z); g.rotation.y = Math.random() * Math.PI * 2; this.scene.add(g); return g;
+    g.position.set(x, 0, z); g.rotation.y = Math.random() * Math.PI * 2; (parent ?? this.scene).add(g); return g;
   }
 
   buildMountains() {
@@ -955,7 +994,7 @@ export class GameEngine {
       const geo = new THREE.ConeGeometry(r, h, 8 + Math.floor(Math.random() * 3));
       const g = 0.28 + Math.random() * 0.18;
       const mat = new THREE.MeshLambertMaterial({ color: new THREE.Color(g, g * 0.93, g).getHex() });
-      const m = new THREE.Mesh(geo, mat); m.position.set(x, h / 2, z); m.rotation.y = Math.random() * Math.PI; this.scene.add(m);
+      const m = new THREE.Mesh(geo, mat); m.position.set(x, h / 2, z); m.rotation.y = Math.random() * Math.PI; this.cityGroup.add(m);
     }
   }
 
@@ -967,7 +1006,7 @@ export class GameEngine {
       fragmentShader: `uniform vec3 topColor,bottomColor; varying vec3 vWP; void main(){ float h=normalize(vWP).y*.5+.5; gl_FragColor=vec4(mix(bottomColor,topColor,h),1.);}`,
       side: THREE.BackSide,
     });
-    this.scene.add(new THREE.Mesh(geo, this.skyMat));
+    this.cityGroup.add(new THREE.Mesh(geo, this.skyMat));
   }
 
   buildStars() {
@@ -1637,16 +1676,19 @@ export class GameEngine {
       const dist = m.pos.distanceTo(this.playerPos);
       // Aggro: only if player attacks first (aggroed=true) OR very close (< 3.5)
       if (!m.aggroed && dist < 3.5) m.aggroed = true;
-      if (m.aggroed && dist > 30) m.aggroed = false; // de-aggro if far
+      if (m.aggroed && dist > 40) { m.aggroed = false; m.chaseTimer = 0; }
       if (m.aggroed || m.state === 'chase') {
         if (dist < 1.4) {
-          m.state = 'attack';
+          m.state = 'attack'; m.chaseTimer = 0;
           if (m.attackTimer <= 0) { this.monsterAttack(m); m.attackTimer = 1.8; }
         } else {
-          m.state = 'chase';
-          const dir = this.playerPos.clone().sub(m.pos).normalize();
-          m.pos.add(dir.multiplyScalar(m.speed * dt));
-          m.mesh.rotation.y = Math.atan2(this.playerPos.x - m.pos.x, this.playerPos.z - m.pos.z);
+          m.state = 'chase'; m.chaseTimer += dt;
+          if (m.chaseTimer > 5) { m.aggroed = false; m.chaseTimer = 0; }
+          else {
+            const dir = this.playerPos.clone().sub(m.pos).normalize();
+            m.pos.add(dir.multiplyScalar(m.speed * dt));
+            m.mesh.rotation.y = Math.atan2(this.playerPos.x - m.pos.x, this.playerPos.z - m.pos.z);
+          }
         }
       } else {
         m.state = 'idle';
@@ -1720,6 +1762,25 @@ export class GameEngine {
         const y = pos.getY(i) - dt * (0.5 + Math.random() * 0.5);
         pos.setY(i, y < 0 ? 20 + Math.random() * 5 : y);
         pos.setX(i, pos.getX(i) + Math.sin(this.animTime + i) * 0.02);
+      }
+      pos.needsUpdate = true;
+    }
+    if (this.rainParticles) {
+      const pos = (this.rainParticles.geometry.attributes.position as THREE.BufferAttribute);
+      const vel = (this.rainParticles.geometry as any).userData.vel as Float32Array;
+      for (let i = 0; i < pos.count; i++) {
+        let y = pos.getY(i) - vel[i] * dt;
+        if (y < -2) y = 30;
+        pos.setY(i, y);
+      }
+      pos.needsUpdate = true;
+    }
+    if (this.sandParticles) {
+      const pos = (this.sandParticles.geometry.attributes.position as THREE.BufferAttribute);
+      for (let i = 0; i < pos.count; i++) {
+        let x = pos.getX(i) + (1.5 + Math.sin(i)*0.5) * dt;
+        if (x > 50) x = -50;
+        pos.setX(i, x);
       }
       pos.needsUpdate = true;
     }
@@ -2412,11 +2473,16 @@ export class GameEngine {
       const skin = SKINS.find(s => s.id === skinId);
       if (!skin) return;
       mesh.traverse(child => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshLambertMaterial
-            && child.name !== 'hpbar' && child.name !== 'hpbg' && child.name !== 'nameSprite') {
-          if (skin.primaryColor !== null) child.material.color.setHex(skin.primaryColor);
-          if (skin.emissive !== null) { child.material.emissive.setHex(skin.emissive); child.material.emissiveIntensity = skin.emissiveIntensity; }
-          else { child.material.emissive.setHex(0x000000); child.material.emissiveIntensity = 0; }
+        if (child instanceof THREE.Mesh && child.name !== 'hpbar' && child.name !== 'hpbg' && child.name !== 'nameSprite') {
+          const oldMat = child.material as THREE.MeshLambertMaterial;
+          const newMat = new THREE.MeshPhongMaterial({
+            color: skin.primaryColor !== null ? skin.primaryColor : oldMat.color,
+            emissive: skin.emissive !== null ? new THREE.Color(skin.emissive) : new THREE.Color(0x000000),
+            emissiveIntensity: skin.emissiveIntensity,
+            shininess: skin.emissive !== null ? 80 : 30,
+            specular: skin.emissive !== null ? new THREE.Color(skin.emissive).multiplyScalar(0.5) : new THREE.Color(0x444444),
+          });
+          child.material = newMat;
         }
       });
     });
@@ -2424,7 +2490,21 @@ export class GameEngine {
 
   setSkin(skinId: string) {
     this.currentSkin = skinId;
-    this.applyMeshSkin(this.playerMesh, skinId);
+    if (skinId === 'default') {
+      // Recreate mesh to restore class colors
+      const oldPos = this.playerMesh.position.clone();
+      const oldRot = this.playerMesh.rotation.clone();
+      const nameSprite = this.playerMesh.getObjectByName('nameSprite');
+      this.playerLight.position.set(oldPos.x, 3, oldPos.z);
+      this.scene.remove(this.playerMesh);
+      this.playerMesh = this.createPlayerMesh(this.playerStats.className);
+      this.playerMesh.position.copy(oldPos);
+      this.playerMesh.rotation.copy(oldRot);
+      if (nameSprite) this.playerMesh.add(nameSprite.clone());
+      this.scene.add(this.playerMesh);
+    } else {
+      this.applyMeshSkin(this.playerMesh, skinId);
+    }
     if (this.multiConnected && this.multiWs?.readyState === 1) {
       this.multiWs.send(JSON.stringify({ type: 'skin', skin: skinId }));
     }
