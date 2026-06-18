@@ -51,13 +51,13 @@ const ZONES: Record<ZoneId, {
   city: {
     name: 'Prontera', icon: '🏰', portalColor: 0x8800ff, fogColor: 0x0a0520, fogDensity: 0.01,
     groundColor: 0x3a7d44, skyTop: 0x000510, skyBottom: 0x0a0520,
-    ambientColor: 0x101030, sunColor: 0xfff0cc,
+    ambientColor: 0x404090, sunColor: 0xfff0cc,
     monsters: [], treeCount: 0, treeColor: 0x2d7a2d, treeStyle: 'round',
   },
   forest: {
     name: 'Floresta Sombria', icon: '🌲', portalColor: 0x00cc44, fogColor: 0x0a1a08, fogDensity: 0.018,
     groundColor: 0x1a4a15, skyTop: 0x010a01, skyBottom: 0x0a1a05,
-    ambientColor: 0x0a2008, sunColor: 0x88ff66,
+    ambientColor: 0x1a5015, sunColor: 0x88ff66,
     monsters: [
       { name: 'Lobo Cinzento', icon: '🐺', level: 5, hp: 120, atk: 18, def: 8, xp: 25, gold: 12, color: 0x7f8c8d, shape: 'quad' },
       { name: 'Goblin Floresta', icon: '👺', level: 8, hp: 160, atk: 22, def: 10, xp: 40, gold: 18, color: 0x2ecc71, shape: 'humanoid' },
@@ -72,7 +72,7 @@ const ZONES: Record<ZoneId, {
   ice: {
     name: 'Tundra Glacial', icon: '❄️', portalColor: 0x00ddff, fogColor: 0x0a1a2a, fogDensity: 0.022,
     groundColor: 0x8ab0cc, skyTop: 0x000815, skyBottom: 0x040d1a,
-    ambientColor: 0x102030, sunColor: 0xaaddff,
+    ambientColor: 0x2a5070, sunColor: 0xaaddff,
     monsters: [
       { name: 'Lobo Ártico', icon: '🐺', level: 15, hp: 200, atk: 30, def: 15, xp: 55, gold: 22, color: 0xddeeff, shape: 'quad' },
       { name: 'Golem de Gelo', icon: '🧊', level: 22, hp: 400, atk: 38, def: 35, xp: 100, gold: 45, color: 0x66aadd, shape: 'boss' },
@@ -87,7 +87,7 @@ const ZONES: Record<ZoneId, {
   volcano: {
     name: 'Caldeira Infernal', icon: '🌋', portalColor: 0xff4400, fogColor: 0x1a0500, fogDensity: 0.02,
     groundColor: 0x2a0d00, skyTop: 0x0f0000, skyBottom: 0x1a0500,
-    ambientColor: 0x200800, sunColor: 0xff6633,
+    ambientColor: 0x602015, sunColor: 0xff6633,
     monsters: [
       { name: 'Salamandra', icon: '🦎', level: 20, hp: 280, atk: 40, def: 18, xp: 70, gold: 30, color: 0xff4400, shape: 'quad' },
       { name: 'Demônio Fogo', icon: '😈', level: 28, hp: 420, atk: 55, def: 22, xp: 110, gold: 50, color: 0xcc2200, shape: 'humanoid' },
@@ -102,7 +102,7 @@ const ZONES: Record<ZoneId, {
   desert: {
     name: 'Deserto de Areia', icon: '🏜️', portalColor: 0xffaa00, fogColor: 0x1a1000, fogDensity: 0.012,
     groundColor: 0xc4a35a, skyTop: 0x060300, skyBottom: 0x180c00,
-    ambientColor: 0x1a1000, sunColor: 0xffcc44,
+    ambientColor: 0x503825, sunColor: 0xffcc44,
     monsters: [
       { name: 'Escorpião', icon: '🦂', level: 10, hp: 150, atk: 25, def: 12, xp: 35, gold: 15, color: 0xcc8800, shape: 'quad' },
       { name: 'Múmia', icon: '🧟', level: 16, hp: 240, atk: 32, def: 18, xp: 60, gold: 28, color: 0xc8a870, shape: 'humanoid' },
@@ -117,7 +117,7 @@ const ZONES: Record<ZoneId, {
   dungeon: {
     name: 'Masmorra das Trevas', icon: '💀', portalColor: 0x6600aa, fogColor: 0x050010, fogDensity: 0.03,
     groundColor: 0x1a1520, skyTop: 0x020005, skyBottom: 0x050010,
-    ambientColor: 0x080010, sunColor: 0xaa55ff,
+    ambientColor: 0x200040, sunColor: 0xaa55ff,
     monsters: [
       { name: 'Esqueleto', icon: '💀', level: 12, hp: 180, atk: 28, def: 10, xp: 45, gold: 20, color: 0xddddbb, shape: 'humanoid' },
       { name: 'Vampiro', icon: '🧛', level: 20, hp: 300, atk: 45, def: 20, xp: 85, gold: 38, color: 0x660033, shape: 'humanoid' },
@@ -189,7 +189,7 @@ export class GameEngine {
   renderer!: THREE.WebGLRenderer; scene!: THREE.Scene; camera!: THREE.PerspectiveCamera;
   clock = new THREE.Clock(); sun!: THREE.DirectionalLight;
   ambient!: THREE.AmbientLight; hemi!: THREE.HemisphereLight;
-  streetLights: THREE.PointLight[] = [];
+  streetLights: THREE.PointLight[] = []; playerLight!: THREE.PointLight;
   playerMesh!: THREE.Group; playerPos = new THREE.Vector3(0, 0, 0);
   playerTarget = new THREE.Vector3(0, 0, 0); playerMoving = false;
   playerDir = new THREE.Vector3(0, 0, -1); animTime = 0;
@@ -332,8 +332,9 @@ export class GameEngine {
     this.setCamPos();
 
     // Lighting
-    this.ambient = new THREE.AmbientLight(0x101030, 0.4); this.scene.add(this.ambient);
-    this.hemi = new THREE.HemisphereLight(0x87ceeb, 0x3a2010, 0.3); this.scene.add(this.hemi);
+    this.ambient = new THREE.AmbientLight(0x404090, 0.9); this.scene.add(this.ambient);
+    this.hemi = new THREE.HemisphereLight(0x87ceeb, 0x5a3a10, 0.6); this.scene.add(this.hemi);
+    this.playerLight = new THREE.PointLight(0xffeedd, 1.2, 10); this.playerLight.position.set(0, 3, 0); this.scene.add(this.playerLight);
     this.sun = new THREE.DirectionalLight(0xfff0cc, 1.8);
     this.sun.position.set(30, 50, 20); this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
@@ -1521,6 +1522,7 @@ export class GameEngine {
     this.playerMesh.position.copy(this.playerPos);
     this.playerMesh.position.y = 0;
     if (this.playerDir.length() > 0.001) this.playerMesh.rotation.y = Math.atan2(this.playerDir.x, this.playerDir.z);
+    this.playerLight.position.set(this.playerPos.x, 3, this.playerPos.z);
   }
 
   updatePlayerAnimation(dt: number) {

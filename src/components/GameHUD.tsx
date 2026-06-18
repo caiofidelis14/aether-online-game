@@ -719,7 +719,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
           <div style={{ color: '#ffd700', fontWeight: 800, fontSize: 15, marginBottom: 12 }}>⚔️ Bem-vindo ao Aether Online!</div>
           <div style={{ color: '#ccc', fontSize: 11, lineHeight: 1.7, marginBottom: 14 }}>
             <b style={{ color: '#fff' }}>WASD</b> ou <b style={{ color: '#fff' }}>clique</b> para mover<br/>
-            <b style={{ color: '#fff' }}>Q/E</b> — girar câmera | <b style={{ color: '#fff' }}>Scroll</b> — zoom<br/>
+            <b style={{ color: '#fff' }}>Z/C</b> — girar câmera | <b style={{ color: '#fff' }}>Scroll</b> — zoom<br/>
             <b style={{ color: '#fff' }}>E</b> — atacar | <b style={{ color: '#fff' }}>F</b> — interagir com NPCs<br/>
             <b style={{ color: '#fff' }}>I</b> — inventário | <b style={{ color: '#fff' }}>M</b> — mapa<br/>
             <b style={{ color: '#fff' }}>K</b> — skills | <b style={{ color: '#fff' }}>P</b> — perfil<br/>
