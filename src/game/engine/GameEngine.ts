@@ -190,6 +190,7 @@ export class GameEngine {
   clock = new THREE.Clock(); sun!: THREE.DirectionalLight;
   ambient!: THREE.AmbientLight; hemi!: THREE.HemisphereLight;
   streetLights: THREE.PointLight[] = []; playerLight!: THREE.PointLight;
+  playerSkills: Record<string, number> = {}; playerSP = 3;
   playerMesh!: THREE.Group; playerPos = new THREE.Vector3(0, 0, 0);
   playerTarget = new THREE.Vector3(0, 0, 0); playerMoving = false;
   playerDir = new THREE.Vector3(0, 0, -1); animTime = 0;
@@ -1846,6 +1847,7 @@ export class GameEngine {
   attackNearMonster() {
     const m = this.getNearMonster(); if (!m) return;
     if (!m.aggroed) m.aggroed = true;
+    import('../systems/SoundSystem').then(mod => mod.getSoundSystem().playAttack()).catch(() => {});
     this.attacking = true; this.attackAnim = 0;
     this.attackTarget = m.pos.clone().add(new THREE.Vector3(0, 0.8, 0));
     const isCrit = Math.random() < 0.22;
@@ -2098,7 +2100,9 @@ export class GameEngine {
     this.playerStats.xpNext = Math.floor(100 * Math.pow(1.15, this.playerStats.level - 1));
     this.playerStats.maxHp += 18; this.playerStats.maxMp += 12; this.playerStats.atk += 2; this.playerStats.def += 1;
     this.playerStats.hp = this.playerStats.maxHp; this.playerStats.mp = this.playerStats.maxMp;
-    this.addLog(`🎉 LEVEL UP! Nível ${this.playerStats.level}! HP/MP restaurados!`);
+    this.playerSP++;
+    this.addLog(`🎉 LEVEL UP! Nível ${this.playerStats.level}! HP/MP restaurados! +1 SP`);
+    import('../systems/SoundSystem').then(m => m.getSoundSystem().playLevelUp()).catch(() => {});
     // Burst of golden rings on level up
     for (let ring = 0; ring < 5; ring++) {
       const r = new THREE.Mesh(
@@ -2303,8 +2307,15 @@ export class GameEngine {
       }
     }
     this.bossKills = save.bossKills; this.deaths = save.deaths; this.tutorialSeen = save.tutorialSeen;
+    if (save.skills) this.playerSkills = { ...save.skills };
+    if (save.sp != null) this.playerSP = save.sp;
     if ((save as any).questProgress) this.loadQuestProgress((save as any).questProgress);
     if ((save as any).inventory?.length) this.inventory = [...(save as any).inventory];
+  }
+
+  updateSkills(skills: Record<string, number>, sp: number) {
+    this.playerSkills = { ...skills };
+    this.playerSP = sp;
   }
 
   // ── MULTIPLAYER ──────────────────────────────────────────────────────────

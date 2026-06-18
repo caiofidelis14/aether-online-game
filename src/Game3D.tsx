@@ -371,6 +371,8 @@ export function Game3DView({ save, onBack, auth }: Game3DProps) {
         zone: stats.zone,
         questProgress: engine.saveQuestProgress(),
         inventory: [...engine.inventory],
+        skills: { ...engine.playerSkills },
+        sp: engine.playerSP,
       };
       // Save to server if authenticated, always keep localStorage as backup
       if (auth) {

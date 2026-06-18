@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { getSoundSystem } from '../game/systems/SoundSystem';
 import type { GameState, ZoneId } from '../game/engine/GameEngine';
 import type { GameEngine } from '../game/engine/GameEngine';
 import type { ClassName } from '../game/data/classes';
@@ -458,14 +459,18 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
   const [showMap, setShowMap] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showQuests, setShowQuests] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [showNPC, setShowNPC] = useState<{ type: string; label: string } | null>(null);
-  const [skillLevels, setSkillLevels] = useState<Record<string, number>>({});
-  const [skillSP, setSkillSP] = useState(save?.sp ?? 3);
+  const [skillLevels, setSkillLevels] = useState<Record<string, number>>(() => save?.skills ?? {});
+  const [skillSP, setSkillSP] = useState(() => save?.sp ?? 3);
   const [quests, setQuests] = useState<Quest[]>(() => generateQuestBoard(state.playerLevel, state.zone));
   const [activeQuests, setActiveQuests] = useState<Quest[]>([]);
   const [tutorialDismissed, setTutorialDismissed] = useState(state.tutorialSeen);
   const [selectedInvItem, setSelectedInvItem] = useState<string | null>(null);
   const [showSkins, setShowSkins] = useState(false);
+  const [musicVol, setMusicVol] = useState(() => { try { return getSoundSystem().getMusicVolume(); } catch { return 0.25; } });
+  const [sfxVol, setSfxVol]     = useState(() => { try { return getSoundSystem().getSfxVolume(); } catch { return 0.7; } });
+  const prevLevel = useRef(state.playerLevel);
   const cls = state.playerClass;
   const skills = skillsArray(SKILL_TREES[cls]);
   const theme = CLASS_SKILL_THEMES[cls];
@@ -489,7 +494,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
         const sk = skillList[numIdx];
         if (sk) {
           const lvl = (skillLevels[sk.id] || 0);
-          if (lvl > 0) engine.useSkill(sk.id, sk.mpCost);
+          if (lvl > 0) { engine.useSkill(sk.id, sk.mpCost); try { getSoundSystem().playSkill(); } catch { /* ignore */ } }
           else engine.addLog(`🔒 Skill ${sk.name} não desbloqueada! Pressione K para abrir a árvore.`);
         }
       }
@@ -498,7 +503,17 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
     return () => window.removeEventListener('keydown', handler);
   }, [engine]);
 
-  useEffect(() => { setSkillSP(p => p + 1); }, [state.playerLevel]);
+  // SP: gain 1 per level-up
+  useEffect(() => {
+    if (state.playerLevel > prevLevel.current) {
+      prevLevel.current = state.playerLevel;
+      setSkillSP(p => {
+        const next = p + 1;
+        engine?.updateSkills(skillLevels, next);
+        return next;
+      });
+    }
+  }, [state.playerLevel]);
 
   // Open NPC popup when near interactable and F pressed
   useEffect(() => {
@@ -523,7 +538,12 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
     if (skillSP <= 0) return;
     const skill = skills.find(s => s.id === id); if (!skill) return;
     const cur = skillLevels[id] || 0; if (cur >= skill.maxLevel) return;
-    setSkillLevels(p => ({ ...p, [id]: cur + 1 })); setSkillSP(p => p - 1);
+    const newLevels = { ...skillLevels, [id]: cur + 1 };
+    const newSP = skillSP - 1;
+    setSkillLevels(newLevels);
+    setSkillSP(newSP);
+    engine?.updateSkills(newLevels, newSP);
+    try { getSoundSystem().playCoin(); } catch { /* ignore */ }
   };
 
   const EQUIP_SLOTS: Record<string, string> = {
@@ -597,17 +617,58 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
 
   const anyPanelOpen = showInventory || showMap || showProfile || showNPC !== null || showQuests;
 
+  // Start ambient music on first interaction (browser AudioContext policy)
+  useEffect(() => {
+    const start = () => {
+      try { const s = getSoundSystem(); s.resume(); if (musicVol > 0) s.startAmbient(); } catch { /* ignore */ }
+      window.removeEventListener('pointerdown', start);
+    };
+    window.addEventListener('pointerdown', start, { once: true });
+    return () => window.removeEventListener('pointerdown', start);
+  }, []);
+
   return (
     <>
       {/* TOP BAR */}
-      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '6px 12px', background: 'linear-gradient(180deg, rgba(0,0,0,0.9) 0%, transparent)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', pointerEvents: 'none', zIndex: 10 }}>
-        <div style={{ color: '#ffd700', fontWeight: 900, fontSize: 13, letterSpacing: 3, textShadow: '0 0 10px #ffd70088' }}>AETHER</div>
-        <div style={{ display: 'flex', gap: 14, fontSize: 11, color: '#ccc', alignItems: 'center' }}>
+      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, padding: '6px 12px', background: 'linear-gradient(180deg, rgba(0,0,0,0.9) 0%, transparent)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 10 }}>
+        <div style={{ color: '#ffd700', fontWeight: 900, fontSize: 13, letterSpacing: 3, textShadow: '0 0 10px #ffd70088', pointerEvents: 'none' }}>AETHER</div>
+        <div style={{ display: 'flex', gap: 14, fontSize: 11, color: '#ccc', alignItems: 'center', pointerEvents: 'none' }}>
           <span>{isNight ? '🌙' : '☀️'} {timeStr}</span>
           <span style={{ color: '#ffd700', fontWeight: 700 }}>💰 {state.playerGold}G</span>
           <span style={{ color: '#aaa' }}>☠️ {state.playerKills}</span>
           <span style={{ color: theme.border }}>Lv.{state.playerLevel} {cls}</span>
-          <span>{ZONE_ICONS[state.zone]} {state.zoneName}</span>
+        </div>
+        {/* Settings gear */}
+        <div style={{ position: 'relative' }}>
+          <button onClick={() => setShowSettings(p => !p)} style={{ background: showSettings ? 'rgba(255,215,0,0.15)' : 'rgba(0,0,0,0.5)', border: `1px solid ${showSettings ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.15)'}`, borderRadius: 8, color: '#ccc', fontSize: 16, cursor: 'pointer', padding: '3px 8px', lineHeight: 1 }}>⚙️</button>
+          {showSettings && (
+            <div style={{ position: 'absolute', top: 36, right: 0, width: 240, background: 'linear-gradient(135deg, rgba(5,2,15,0.98), rgba(10,5,30,0.98))', border: '1px solid rgba(255,215,0,0.2)', borderRadius: 14, padding: 16, zIndex: 200, backdropFilter: 'blur(20px)', boxShadow: '0 8px 32px rgba(0,0,0,0.8)' }}>
+              <div style={{ color: '#ffd700', fontWeight: 800, fontSize: 12, marginBottom: 14, letterSpacing: 1 }}>⚙️ CONFIGURAÇÕES</div>
+              {/* Volume controls */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 10, color: '#aaa', marginBottom: 6 }}>🎵 Música — {Math.round(musicVol * 100)}%</div>
+                <input type="range" min={0} max={100} value={Math.round(musicVol * 100)} onChange={e => { const v = +e.target.value / 100; setMusicVol(v); try { getSoundSystem().setMusicVolume(v); } catch { /* ignore */ } }} style={{ width: '100%', accentColor: '#9b59b6' }} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 10, color: '#aaa', marginBottom: 6 }}>🔊 SFX — {Math.round(sfxVol * 100)}%</div>
+                <input type="range" min={0} max={100} value={Math.round(sfxVol * 100)} onChange={e => { const v = +e.target.value / 100; setSfxVol(v); try { getSoundSystem().setSfxVolume(v); } catch { /* ignore */ } }} style={{ width: '100%', accentColor: '#e74c3c' }} />
+              </div>
+              <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', marginBottom: 14 }} />
+              {/* Fullscreen */}
+              <button onClick={() => { if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }} style={{ width: '100%', padding: '8px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, color: '#ccc', fontSize: 11, cursor: 'pointer', marginBottom: 10 }}>
+                {document.fullscreenElement ? '⛶ Sair da Tela Cheia' : '⛶ Tela Cheia'}
+              </button>
+              {/* Shortcuts to panels */}
+              <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', marginBottom: 10 }} />
+              <div style={{ fontSize: 9, color: '#555', marginBottom: 8, letterSpacing: 1 }}>MENUS RÁPIDOS</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                {([['[K] Skills', () => { setShowSkills(p=>!p); setShowSettings(false); }], ['[J] Missões', () => { setShowQuests(p=>!p); setShowSettings(false); }], ['[I] Inventário', () => { setShowInventory(p=>!p); setShowSettings(false); }], ['[M] Mapa', () => { setShowMap(p=>!p); setShowSettings(false); }], ['[P] Perfil', () => { setShowProfile(p=>!p); setShowSettings(false); }]] as [string, () => void][]).map(([label, fn]) => (
+                  <button key={label} onClick={fn} style={{ padding: '6px 4px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 7, color: '#bbb', fontSize: 9, cursor: 'pointer' }}>{label}</button>
+                ))}
+              </div>
+              <div style={{ marginTop: 12, fontSize: 8, color: '#333', textAlign: 'center' }}>Aether Online · sons auto-iniciam no 1º clique</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -635,12 +696,12 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
         </div>
       </div>
 
-      {/* ACTIVE QUEST TRACKER */}
+      {/* ACTIVE QUEST TRACKER — below minimap (minimap ends ~204px from top) */}
       {(() => {
         const activeQs = (state.questProgress ?? []).filter(q => !q.claimed).slice(0, 3);
         if (activeQs.length === 0) return null;
         return (
-          <div style={{ position: 'absolute', top: 36, right: 10, width: 200, zIndex: 10, pointerEvents: 'none' }}>
+          <div style={{ position: 'absolute', top: 210, right: 10, width: 190, zIndex: 10, pointerEvents: 'none' }}>
             {activeQs.map(qp => {
               const q = QUESTS[qp.questId];
               if (!q) return null;
