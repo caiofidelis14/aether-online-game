@@ -2451,11 +2451,13 @@ export class GameEngine {
     const mesh = this.buildEquipmentMesh(name, slot);
     if (mesh) { this.playerMesh.add(mesh); this.equipmentMeshes[slot] = mesh; }
     this.addLog(`✅ Equipado: ${icon} ${name}`);
+    this.onState(this.buildState());
   }
 
   unequipItem(slot: string) {
     if (this.equipmentMeshes[slot]) { this.playerMesh.remove(this.equipmentMeshes[slot]); delete this.equipmentMeshes[slot]; }
     delete this.equippedItems[slot];
+    this.onState(this.buildState());
   }
 
   buildEquipmentMesh(name: string, slot: string): THREE.Object3D | null {
@@ -2609,15 +2611,18 @@ export class GameEngine {
   }
 
   // ── MULTIPLAYER ──────────────────────────────────────────────────────────
-  connectMultiplayer(url: string, playerName: string) {
+  authToken: string | null = null;
+
+  connectMultiplayer(url: string, playerName: string, token?: string | null) {
     if (this.multiWs) this.disconnectMultiplayer();
+    if (token) this.authToken = token;
     let ws: WebSocket;
     try { ws = new WebSocket(url); } catch { this.addLog('❌ URL inválida'); return; }
     this.multiWs = ws;
 
     ws.onopen = () => {
       this.multiConnected = true;
-      ws.send(JSON.stringify({ type: 'join', name: playerName, cls: this.playerStats.className, level: this.playerStats.level, x: +this.playerPos.x.toFixed(2), z: +this.playerPos.z.toFixed(2), zone: this.currentZone, hp: this.playerStats.hp, maxHp: this.playerStats.maxHp }));
+      ws.send(JSON.stringify({ type: 'join', name: playerName, token: this.authToken ?? undefined, cls: this.playerStats.className, level: this.playerStats.level, x: +this.playerPos.x.toFixed(2), z: +this.playerPos.z.toFixed(2), zone: this.currentZone, hp: this.playerStats.hp, maxHp: this.playerStats.maxHp }));
     };
 
     ws.onmessage = (e: MessageEvent) => {

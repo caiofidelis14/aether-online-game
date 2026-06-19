@@ -1008,7 +1008,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
       {showProfile && <ProfilePanel state={state} save={save} onClose={() => setShowProfile(false)} />}
       {showMap && <MapPanel currentZone={state.zone} onPortal={(z) => { engine?.enterZone(z); setShowMap(false); }} onClose={() => setShowMap(false)} />}
       {showInventory && (
-        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 380, background: 'linear-gradient(135deg, rgba(8,4,20,0.98), rgba(15,8,35,0.98))', border: '1px solid rgba(255,215,0,0.2)', borderRadius: 16, padding: 20, zIndex: 200, backdropFilter: 'blur(20px)', boxShadow: '0 0 40px rgba(155,89,182,0.2)' }}>
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 620, maxWidth: '94vw', background: 'linear-gradient(135deg, rgba(8,4,20,0.98), rgba(15,8,35,0.98))', border: '1px solid rgba(255,215,0,0.2)', borderRadius: 16, padding: 20, zIndex: 200, backdropFilter: 'blur(20px)', boxShadow: '0 0 40px rgba(155,89,182,0.2)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center' }}>
               <div style={{ color: '#ffd700', fontWeight: 800, fontSize: 14 }}>🎒 INVENTÁRIO <span style={{ color: '#555', fontWeight: 400, fontSize: 10 }}>{(state.inventory ?? []).length}/30</span></div>
@@ -1021,6 +1021,53 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
             </div>
             <button onClick={() => { setShowInventory(false); setSelectedInvItem(null); }} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 16 }}>✕</button>
           </div>
+          <div style={{ display: 'flex', gap: 16 }}>
+          {/* ── Paper-doll: personagem + slots equipados ── */}
+          <div style={{ width: 220, flexShrink: 0 }}>
+            {(() => {
+              const eq = engine?.equippedItems ?? {};
+              const SLOTS: { slot: string; label: string; icon: string }[] = [
+                { slot: 'helmet', label: 'Elmo', icon: '🪖' },
+                { slot: 'weapon', label: 'Arma', icon: '⚔️' },
+                { slot: 'armor', label: 'Peito', icon: '🛡️' },
+                { slot: 'shield', label: 'Escudo', icon: '🔰' },
+                { slot: 'boots', label: 'Botas', icon: '👢' },
+                { slot: 'wings', label: 'Asas', icon: '🪽' },
+              ];
+              const slotBox = (s: { slot: string; label: string; icon: string }) => {
+                const it = (eq as Record<string, { name: string; icon: string }>)[s.slot];
+                return (
+                  <div key={s.slot} onClick={() => it && engine?.unequipItem(s.slot)}
+                    title={it ? `${it.name} — clique para remover` : `${s.label} vazio`}
+                    style={{ width: 50, height: 50, borderRadius: 8, background: it ? 'rgba(255,215,0,0.12)' : 'rgba(255,255,255,0.04)', border: `1px solid ${it ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.1)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: it ? 'pointer' : 'default', fontSize: it ? 22 : 16, position: 'relative' }}>
+                    {it ? it.icon : <span style={{ opacity: 0.3 }}>{s.icon}</span>}
+                  </div>
+                );
+              };
+              return (
+                <div style={{ background: 'radial-gradient(ellipse at 50% 35%, rgba(155,89,182,0.18), rgba(0,0,0,0.3))', borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{[SLOTS[0], SLOTS[1], SLOTS[2]].map(slotBox)}</div>
+                    {/* Avatar central */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
+                      <div style={{ fontSize: 64, filter: 'drop-shadow(0 0 12px rgba(155,89,182,0.6))' }}>{CLASS_ICONS[cls as ClassName] ?? '🧙'}</div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: '#fff', marginTop: 4 }}>{save?.name ?? 'Herói'}</div>
+                      <div style={{ fontSize: 10, color: '#9b59b6', textTransform: 'capitalize' }}>{cls} · Nv.{state.playerLevel}</div>
+                      {(engine?.equipmentLevel ?? 0) > 0 && <div style={{ fontSize: 10, color: '#e74c3c', fontWeight: 700 }}>⚒️ Equip +{engine?.equipmentLevel}</div>}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>{[SLOTS[3], SLOTS[4], SLOTS[5]].map(slotBox)}</div>
+                  </div>
+                  {/* Stats resumo */}
+                  <div style={{ display: 'flex', justifyContent: 'space-around', marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 9, color: '#888' }}>⚔️ ATK</div><div style={{ fontSize: 13, fontWeight: 800, color: '#ff7675' }}>{engine?.playerStats.atk ?? '—'}</div></div>
+                    <div style={{ textAlign: 'center' }}><div style={{ fontSize: 9, color: '#888' }}>🛡️ DEF</div><div style={{ fontSize: 13, fontWeight: 800, color: '#74b9ff' }}>{engine?.playerStats.def ?? '—'}</div></div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+          {/* ── Grade de itens ── */}
+          <div style={{ flex: 1 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 6, marginBottom: 14 }}>
             {Array.from({ length: 30 }, (_, i) => {
               const item = (state.inventory ?? [])[i];
@@ -1073,7 +1120,9 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
             );
           })()}
           {(state.inventory ?? []).length === 0 && <div style={{ fontSize: 11, color: '#555', textAlign: 'center', padding: 10 }}>Inventário vazio — compre itens nas lojas [F]</div>}
-          <div style={{ fontSize: 9, color: '#444', textAlign: 'center', letterSpacing: 1 }}>CLIQUE NO ITEM · [I] FECHAR</div>
+          <div style={{ fontSize: 9, color: '#444', textAlign: 'center', letterSpacing: 1 }}>CLIQUE NO ITEM · BOTÃO DIREITO EQUIPA · [I] FECHAR</div>
+          </div>
+          </div>
         </div>
       )}
 

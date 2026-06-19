@@ -401,7 +401,7 @@ export function Game3DView({ save, onBack, auth }: Game3DProps) {
     const wsUrl = (host.includes('localhost') || host.includes('127.0.0.1'))
       ? 'ws://localhost:3001'
       : `${proto}//${host}`;
-    setTimeout(() => engine.connectMultiplayer(wsUrl, save.name), 1500);
+    setTimeout(() => engine.connectMultiplayer(wsUrl, save.name, auth?.token), 1500);
 
     setTimeout(() => setLoaded(true), 600);
 

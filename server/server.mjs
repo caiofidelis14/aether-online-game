@@ -362,32 +362,52 @@ wss.on('connection', (ws, req) => {
   console.log(`[+] Client connected id=${id} ip=${req.socket.remoteAddress}`);
 
   ws.on('message', (raw) => {
+    // Drop oversized frames (anti-DoS)
+    if (raw.length > 8192) return;
+    // Per-connection rate limit: max 40 messages/second
+    const now = Date.now();
+    ws._msgTimes = (ws._msgTimes || []).filter(t => now - t < 1000);
+    ws._msgTimes.push(now);
+    if (ws._msgTimes.length > 40) return;
+
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
 
     switch (msg.type) {
       case 'join': {
+        // ── Verify identity via HMAC token (anti-impersonation) ──
+        const accountKey = verifyToken(msg.token);
+        const authAccount = accountKey ? loadAccounts()[accountKey] : null;
+        const verifiedUsername = authAccount?.username || null;
+
         const player = {
           id,
           ws,
-          name: String(msg.name || 'Herói').slice(0, 24),
+          name: String(msg.name || verifiedUsername || 'Herói').slice(0, 24),
+          accountKey: accountKey || null,       // verified account key (null = guest)
+          username: verifiedUsername,            // verified login name — source of truth for clan/admin
+          authed: !!authAccount,
           cls: msg.cls || 'warrior',
-          level: msg.level || 1,
-          x: msg.x || 0,
-          z: msg.z || 0,
-          dir: msg.dir || 0,
+          level: Math.max(1, Math.min(Number(msg.level) || 1, 200)),
+          x: Number(msg.x) || 0,
+          z: Number(msg.z) || 0,
+          dir: Number(msg.dir) || 0,
           zone: msg.zone || 'city',
-          hp: msg.hp || 200,
-          maxHp: msg.maxHp || 200,
+          hp: Math.max(0, Number(msg.hp) || 200),
+          maxHp: Math.max(1, Number(msg.maxHp) || 200),
         };
         players.set(id, player);
 
-        const vip = VIP[player.name];
-        const role = vip?.role ?? (ADMINS.has(player.name) ? 'admin' : GMS.has(player.name) ? 'gm' : null);
+        // Privileges resolved ONLY from verified identity, never client-supplied name
+        const vip = player.authed ? VIP[verifiedUsername] : null;
+        const role = player.authed
+          ? (vip?.role ?? (ADMINS.has(verifiedUsername) ? 'admin' : GMS.has(verifiedUsername) ? 'gm' : null))
+          : null;
         if (vip) {
-          ws.send(JSON.stringify({ type: 'gm_give', gold: vip.gold, role, msg: `👑 Bem-vindo ${role.toUpperCase()} ${player.name}! +${vip.gold} Gold!` }));
-          console.log(`  ★ VIP join: ${player.name} (${role}) +${vip.gold}G`);
+          ws.send(JSON.stringify({ type: 'gm_give', gold: vip.gold, role, msg: `👑 Bem-vindo ${role.toUpperCase()} ${verifiedUsername}! +${vip.gold} Gold!` }));
+          console.log(`  ★ VIP join: ${verifiedUsername} (${role}) +${vip.gold}G`);
         }
+        if (!player.authed) console.log(`  ⚠ Guest join (no valid token): ${player.name}`);
 
         ws.send(JSON.stringify({
           type: 'init',
@@ -399,15 +419,14 @@ wss.on('connection', (ws, req) => {
         broadcast({ type: 'player_join', player: { ...player, ws: undefined, role: role ?? 'player' } }, ws);
         console.log(`  → ${player.name} (${player.cls}) joined. Total: ${players.size}`);
 
-        // Send existing clan info on join
-        const joinAccounts = loadAccounts();
-        const joinAcc = joinAccounts[player.name.toLowerCase()];
+        // Send existing clan info on join (keyed by verified account, not display name)
+        const joinAcc = player.accountKey ? loadAccounts()[player.accountKey] : null;
         if (joinAcc?.clan) {
           ws.send(JSON.stringify({ type: 'clan_update', clan: joinAcc.clan }));
           const cmMembers = joinAcc.clan.members || [];
           const cmOnline = new Set();
           for (const [, pl] of players) {
-            if (pl.ws.readyState === WebSocket.OPEN && cmMembers.includes(pl.name)) cmOnline.add(pl.name);
+            if (pl.ws.readyState === WebSocket.OPEN && pl.username && cmMembers.includes(pl.username)) cmOnline.add(pl.username);
           }
           ws.send(JSON.stringify({ type: 'clan_members', members: cmMembers.map(n => ({ name: n, online: cmOnline.has(n) })), clanName: joinAcc.clan.name, leader: joinAcc.clan.leader }));
         }
@@ -458,17 +477,16 @@ wss.on('connection', (ws, req) => {
 
       case 'gm_cmd': {
         const p = players.get(id);
-        if (!p || !ADMINS.has(p.name)) break;
+        if (!p?.authed || !ADMINS.has(p.username)) break;   // verified identity only
         const cmd = String(msg.cmd || '');
         if (cmd === 'give_all_gold') {
           const amount = Math.min(Number(msg.amount) || 10000, 999999);
-          broadcastAll({ type: 'gm_give', gold: amount, msg: `💰 GM ${p.name} deu ${amount}G para todos!` });
-          console.log(`  [GM] ${p.name} gave ${amount}G to all`);
+          broadcastAll({ type: 'gm_give', gold: amount, msg: `💰 GM ${p.username} deu ${amount}G para todos!` });
+          console.log(`  [GM] ${p.username} gave ${amount}G to all`);
         } else if (cmd === 'give_gold' && msg.target) {
-          for (const [tid, tw] of [...wss.clients].map(c => [c.playerId, c])) {
-            const tp = players.get(tid);
-            if (tp && tp.name === msg.target) {
-              tw.send(JSON.stringify({ type: 'gm_give', gold: Number(msg.amount) || 10000, msg: `💰 GM ${p.name} deu ${msg.amount}G para você!` }));
+          for (const [, tp] of players) {
+            if (tp.name === msg.target || tp.username === msg.target) {
+              tp.ws.send(JSON.stringify({ type: 'gm_give', gold: Number(msg.amount) || 10000, msg: `💰 GM ${p.username} deu ${msg.amount}G para você!` }));
             }
           }
         }
@@ -478,18 +496,19 @@ wss.on('connection', (ws, req) => {
       case 'chat': {
         const p = players.get(id);
         if (!p) break;
-        const rawText = String(msg.msg || '').slice(0, 200);
-        if (rawText.startsWith('/') && ADMINS.has(p.name)) {
+        const rawText = String(msg.text ?? msg.msg ?? '').slice(0, 200);
+        if (rawText.startsWith('/') && p.authed && ADMINS.has(p.username)) {
           const parts = rawText.slice(1).split(' ');
           if (parts[0] === 'give') {
             const amount = Math.min(Number(parts[parts.length - 1]) || 10000, 999999);
-            broadcastAll({ type: 'gm_give', gold: amount, msg: `💰 GM ${p.name}: +${amount}G para todos!` });
+            broadcastAll({ type: 'gm_give', gold: amount, msg: `💰 GM ${p.username}: +${amount}G para todos!` });
           }
           break;
         }
-        const text = rawText;
-        if (!text.trim()) break;
-        broadcastAll({ type: 'chat', id, name: p.name, cls: p.cls, msg: text });
+        const text = rawText.trim();
+        if (!text) break;
+        // Broadcast with both field names for client compatibility (from/text + name/msg)
+        broadcastAll({ type: 'chat', id, from: p.name, name: p.name, cls: p.cls, text, msg: text });
         console.log(`  [chat] ${p.name}: ${text}`);
         break;
       }
@@ -521,17 +540,16 @@ wss.on('connection', (ws, req) => {
 
       case 'clan_create': {
         const p = players.get(id);
-        if (!p) break;
+        if (!p?.authed || !p.accountKey) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Faça login para usar clãs.' })); break; }
         const accounts = loadAccounts();
-        const accKey = p.name.toLowerCase();
-        const account = accounts[accKey];
+        const account = accounts[p.accountKey];
         if (!account) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Conta não encontrada.' })); break; }
         if (account.clan) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Você já está em um clã.' })); break; }
         const newClanName = String(msg.name || '').trim().slice(0, 24);
         if (newClanName.length < 2) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Nome do clã muito curto.' })); break; }
         const taken = Object.values(accounts).some(a => a.clan?.name?.toLowerCase() === newClanName.toLowerCase());
         if (taken) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Já existe um clã com esse nome.' })); break; }
-        const leaderName = account.username || p.name;
+        const leaderName = p.username;
         account.clan = { name: newClanName, leader: leaderName, members: [] };
         saveAccounts(accounts);
         ws.send(JSON.stringify({ type: 'clan_update', clan: account.clan }));
@@ -542,16 +560,15 @@ wss.on('connection', (ws, req) => {
 
       case 'clan_chat': {
         const p = players.get(id);
-        if (!p) break;
+        if (!p?.authed || !p.accountKey) break;
         const accounts = loadAccounts();
-        const accountKey = p.name.toLowerCase();
-        const account = accounts[accountKey];
+        const account = accounts[p.accountKey];
         if (!account?.clan) break;
         const clanName = account.clan.name;
-        const clanMsg = JSON.stringify({ type: 'clan_chat', from: account.username || p.name, text: (msg.text || '').slice(0, 200), ts: Date.now() });
+        const clanMsg = JSON.stringify({ type: 'clan_chat', from: p.username, text: (msg.text || '').slice(0, 200), ts: Date.now() });
         for (const [, pl] of players) {
-          if (pl.ws.readyState !== WebSocket.OPEN) continue;
-          const pAcc = accounts[pl.name.toLowerCase()];
+          if (pl.ws.readyState !== WebSocket.OPEN || !pl.accountKey) continue;
+          const pAcc = accounts[pl.accountKey];
           if (pAcc?.clan?.name === clanName) pl.ws.send(clanMsg);
         }
         break;
@@ -559,25 +576,25 @@ wss.on('connection', (ws, req) => {
 
       case 'clan_invite': {
         const p = players.get(id);
-        if (!p) break;
+        if (!p?.authed || !p.accountKey) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Faça login para usar clãs.' })); break; }
         const accounts = loadAccounts();
-        const inviter = accounts[p.name.toLowerCase()];
+        const inviter = accounts[p.accountKey];
         if (!inviter?.clan) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Você não tem um clã.' })); break; }
-        const targetName = msg.target;
-        const targetKey = targetName?.toLowerCase();
+        if (inviter.clan.leader !== p.username) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Apenas o líder pode convidar.' })); break; }
+        const targetKey = String(msg.target || '').trim().toLowerCase();
         const targetAcc = targetKey ? accounts[targetKey] : null;
         if (!targetAcc) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Jogador não encontrado.' })); break; }
+        if (targetAcc.clan) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Jogador já está em um clã.' })); break; }
         if (!inviter.clan.members) inviter.clan.members = [];
-        if (!inviter.clan.members.includes(targetAcc.username || targetName)) {
-          inviter.clan.members.push(targetAcc.username || targetName);
-        }
+        if (!inviter.clan.members.includes(targetAcc.username)) inviter.clan.members.push(targetAcc.username);
         targetAcc.clan = { name: inviter.clan.name, leader: inviter.clan.leader, members: [...inviter.clan.members] };
         saveAccounts(accounts);
         ws.send(JSON.stringify({ type: 'clan_update', clan: inviter.clan }));
         // Notify target if online
         for (const [, pl] of players) {
-          if (pl.ws.readyState === WebSocket.OPEN && pl.name.toLowerCase() === targetKey) {
+          if (pl.ws.readyState === WebSocket.OPEN && pl.accountKey === targetKey) {
             pl.ws.send(JSON.stringify({ type: 'clan_invited', clan: targetAcc.clan }));
+            pl.ws.send(JSON.stringify({ type: 'clan_update', clan: targetAcc.clan }));
           }
         }
         break;
@@ -585,18 +602,17 @@ wss.on('connection', (ws, req) => {
 
       case 'clan_kick': {
         const p = players.get(id);
-        if (!p) break;
+        if (!p?.authed || !p.accountKey) break;
         const accounts = loadAccounts();
-        const kicker = accounts[p.name.toLowerCase()];
-        if (!kicker?.clan || kicker.clan.leader !== (kicker.username || p.name)) {
+        const kicker = accounts[p.accountKey];
+        if (!kicker?.clan || kicker.clan.leader !== p.username) {
           ws.send(JSON.stringify({ type: 'clan_error', msg: 'Sem permissão.' })); break;
         }
-        const target = msg.target;
+        const target = String(msg.target || '');
+        if (target === kicker.clan.leader) break; // can't kick self/leader
         kicker.clan.members = (kicker.clan.members || []).filter(m => m !== target);
         for (const [, acc] of Object.entries(accounts)) {
-          if ((acc.username === target || acc.username === target) && acc.clan?.name === kicker.clan.name) {
-            acc.clan = null; break;
-          }
+          if (acc.username === target && acc.clan?.name === kicker.clan.name) { acc.clan = null; break; }
         }
         saveAccounts(accounts);
         ws.send(JSON.stringify({ type: 'clan_update', clan: kicker.clan }));
@@ -605,18 +621,18 @@ wss.on('connection', (ws, req) => {
 
       case 'clan_leave': {
         const p = players.get(id);
-        if (!p) break;
+        if (!p?.authed || !p.accountKey) break;
         const accounts = loadAccounts();
-        const acc = accounts[p.name.toLowerCase()];
+        const acc = accounts[p.accountKey];
         if (!acc?.clan) break;
         const clanName = acc.clan.name;
-        const isLeader = acc.clan.leader === (acc.username || p.name);
+        const isLeader = acc.clan.leader === p.username;
         if (isLeader) {
           for (const [, a] of Object.entries(accounts)) { if (a.clan?.name === clanName) a.clan = null; }
         } else {
           for (const [, a] of Object.entries(accounts)) {
-            if ((a.username || '') !== (acc.username || p.name) && a.clan?.name === clanName && a.clan.members) {
-              a.clan.members = a.clan.members.filter(m => m !== (acc.username || p.name));
+            if (a.username !== p.username && a.clan?.name === clanName && a.clan.members) {
+              a.clan.members = a.clan.members.filter(m => m !== p.username);
             }
           }
           acc.clan = null;
@@ -628,16 +644,14 @@ wss.on('connection', (ws, req) => {
 
       case 'clan_members_request': {
         const p = players.get(id);
-        if (!p) break;
+        if (!p?.authed || !p.accountKey) break;
         const accounts = loadAccounts();
-        const acc = accounts[p.name.toLowerCase()];
+        const acc = accounts[p.accountKey];
         if (!acc?.clan) break;
         const members = acc.clan.members || [];
         const onlineSet = new Set();
         for (const [, pl] of players) {
-          if (pl.ws.readyState === WebSocket.OPEN && members.includes(pl.name)) {
-            onlineSet.add(pl.name);
-          }
+          if (pl.ws.readyState === WebSocket.OPEN && pl.username && members.includes(pl.username)) onlineSet.add(pl.username);
         }
         ws.send(JSON.stringify({
           type: 'clan_members',
