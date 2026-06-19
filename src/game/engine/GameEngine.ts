@@ -277,6 +277,9 @@ export class GameEngine {
   onClanMembers?: (members: any[]) => void;
   onStatsUpdate?: (stats: { hp: number; maxHp: number; mp: number; maxMp: number; xp: number; xpNext: number; level: number; gold: number; kills: number; totalXp: number; atk: number; def: number; className: ClassName; name: string }) => void;
   onMonsterDead?: (m: any) => void;
+  equipmentLevel = 0; // +N enhancement level on gear
+  achievements: Record<string, boolean> = {};
+  onAchievement?: (id: string, name: string) => void;
 
   playerStats = {
     hp: 200, maxHp: 200, mp: 100, maxMp: 100, xp: 0, xpNext: 100,
@@ -498,29 +501,35 @@ export class GameEngine {
     if (typeof document !== 'undefined') {
       const addBadge = (label: string, x: number, y: number, z: number, color: number) => {
         const canvas = document.createElement('canvas');
-        canvas.width = 192; canvas.height = 64;
+        canvas.width = 256; canvas.height = 80;
         const ctx = canvas.getContext('2d')!;
-        ctx.clearRect(0, 0, 192, 64);
-        ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}cc`;
+        ctx.clearRect(0, 0, 256, 80);
+        // Background pill
+        ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}ee`;
         ctx.beginPath();
-        if (ctx.roundRect) { ctx.roundRect(4, 4, 184, 56, 10); } else { ctx.rect(4, 4, 184, 56); }
+        if (ctx.roundRect) ctx.roundRect(6, 6, 244, 68, 14); else ctx.rect(6, 6, 244, 68);
         ctx.fill();
+        // Border
+        ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.stroke();
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 22px Arial';
+        ctx.font = 'bold 34px Arial';
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(label, 96, 32);
+        ctx.fillText(label, 128, 42);
         const texture = new THREE.CanvasTexture(canvas);
-        const mat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
         const sprite = new THREE.Sprite(mat);
         sprite.position.set(x, y, z);
-        sprite.scale.set(4, 1.4, 1);
+        sprite.scale.set(6, 2, 1);
+        sprite.renderOrder = 999;
+        sprite.name = 'cityBadge';
         this.cityGroup.add(sprite);
       };
-      addBadge('BANCO', 18, 10.5, 11, 0x1a5276);
-      addBadge('TAVERNA', -18, 10.5, 17, 0x6e2f0a);
-      addBadge('MAGIA', -22, 20, -18, 0x4a0080);
-      addBadge('ARENA', 20, 8, -16, 0x4a4a4a);
-      addBadge('MERCADO', 0, 5, -7, 0x1a6b1a);
+      addBadge('🏦 BANCO', 18, 9, 14, 0x1a5276);
+      addBadge('🍺 TAVERNA', -18, 9, 14, 0x6e2f0a);
+      addBadge('🔮 MAGIA', -22, 22, -18, 0x4a0080);
+      addBadge('⚔️ ARENA', 20, 9, -16, 0x4a4a4a);
+      addBadge('🏪 LOJA', -15, 4, -15, 0x2980b9);
+      addBadge('⚒️ FERREIRO', 15, 4, 15, 0xc0392b);
     }
 
     // ── Street Lamps ──────────────────────────────────────────────────────────
@@ -646,6 +655,7 @@ export class GameEngine {
     // Interactive NPCs
     const shopMesh = this.buildNPCMesh(0xf4c2a0, 0x3498db); shopMesh.position.set(-15, 0, -15);
     this.cityGroup.add(shopMesh);
+    const shopLight = new THREE.PointLight(0x3498db, 1.2, 6); shopLight.position.set(-15, 2, -15); this.cityGroup.add(shopLight);
     const shopEntry = { pos: new THREE.Vector3(-15, 0, -15), type: 'shop' as const, label: '🏪 Loja do Mercador', mesh: shopMesh };
     this.interactables.push(shopEntry); this.cityInteractables.push(shopEntry);
 
@@ -656,6 +666,7 @@ export class GameEngine {
 
     const blacksmith = this.buildNPCMesh(0xcc9966, 0xe74c3c); blacksmith.position.set(15, 0, 15);
     this.cityGroup.add(blacksmith);
+    const smithLight = new THREE.PointLight(0xe74c3c, 1.4, 6); smithLight.position.set(15, 2, 15); this.cityGroup.add(smithLight);
     const smithEntry = { pos: new THREE.Vector3(15, 0, 15), type: 'blacksmith' as const, label: '⚒️ Ferreiro', mesh: blacksmith };
     this.interactables.push(smithEntry); this.cityInteractables.push(smithEntry);
 
@@ -798,27 +809,37 @@ export class GameEngine {
       const p = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.1, 4), wood); p.position.set(x + dx, 1.05, z - 0.85); this.cityGroup.add(p);
     }
 
-    // Merchant NPC behind the stall
+    // Merchant NPC standing at the FRONT of the stall (facing player area)
     const npcGroup = new THREE.Group();
-    npcGroup.position.set(x, 0, z + 0.8);
-    // Body
+    npcGroup.position.set(x, 0, z + 1.1);
+    // Legs
+    const legMat = new THREE.MeshLambertMaterial({ color: 0x3a3a4a });
+    for (const lx of [-0.13, 0.13]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.5, 0.18), legMat);
+      leg.position.set(lx, 0.25, 0); npcGroup.add(leg);
+    }
+    // Body (apron in stall color, emissive so visible at night)
     const body = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.22, 0.25, 0.7, 8),
-      new THREE.MeshPhongMaterial({ color })
+      new THREE.BoxGeometry(0.5, 0.7, 0.32),
+      new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.35 })
     );
-    body.position.y = 0.55; npcGroup.add(body);
+    body.position.y = 0.85; npcGroup.add(body);
+    // Arms
+    const armMat = new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.25 });
+    for (const ax of [-0.33, 0.33]) {
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.55, 0.14), armMat);
+      arm.position.set(ax, 0.82, 0); npcGroup.add(arm);
+    }
     // Head
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(0.2, 8, 8),
-      new THREE.MeshPhongMaterial({ color: 0xf5cba7 })
-    );
-    head.position.y = 1.1; npcGroup.add(head);
-    // Hat (small cone in stall color)
-    const hat = new THREE.Mesh(
-      new THREE.ConeGeometry(0.22, 0.3, 8),
-      new THREE.MeshPhongMaterial({ color })
-    );
-    hat.position.y = 1.4; npcGroup.add(hat);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.34, 0.34), new THREE.MeshLambertMaterial({ color: 0xf5cba7 }));
+    head.position.y = 1.4; npcGroup.add(head);
+    // Merchant hat
+    const hat = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.32, 8), new THREE.MeshLambertMaterial({ color, emissive: color, emissiveIntensity: 0.4 }));
+    hat.position.y = 1.72; npcGroup.add(hat);
+    // Small glow light so merchant is lit
+    const npcLight = new THREE.PointLight(color, 0.6, 4);
+    npcLight.position.set(0, 1.2, 0); npcGroup.add(npcLight);
+    npcGroup.rotation.y = Math.PI; // face outward toward plaza
     npcGroup.name = 'merchantNPC';
     this.cityGroup.add(npcGroup);
   }
@@ -828,6 +849,7 @@ export class GameEngine {
     if (this.currentZone === zoneId || this.transitioning) return;
     this.transitioning = true; this.transitionDir = 1; this.transitionAlpha = 0; this.pendingZone = zoneId;
     this.addLog(`🌀 Entrando em ${ZONES[zoneId].name}...`);
+    this.checkAchievement('first_portal', 'Explorador');
   }
 
   executeZoneTransition(zoneId: ZoneId) {
@@ -1560,7 +1582,7 @@ export class GameEngine {
   }
 
   triggerSave() {
-    if (this.onSave) this.onSave({ kills: this.playerStats.kills, bossKills: this.bossKills, deaths: this.deaths, xp: this.playerStats.xp, level: this.playerStats.level, gold: this.playerStats.gold, zone: this.currentZone });
+    if (this.onSave) this.onSave({ kills: this.playerStats.kills, bossKills: this.bossKills, deaths: this.deaths, xp: this.playerStats.xp, level: this.playerStats.level, gold: this.playerStats.gold, zone: this.currentZone, achievements: this.achievements, equipmentLevel: this.equipmentLevel } as any);
   }
 
   updateTransition(dt: number) {
@@ -2030,6 +2052,7 @@ export class GameEngine {
     import('../systems/SoundSystem').then(mod => mod.getSoundSystem().playHit()).catch(() => {});
     this.spawnDmgNumber(m.pos.clone().add(new THREE.Vector3(0, 2, 0)), dmg, '#ff4444');
     if (m.hp <= 0) {
+      this.checkAchievement('first_kill', 'Primeiro Sangue');
       this.onMonsterDead?.(m);
       this.killMonster(m);
     }
@@ -2324,6 +2347,8 @@ export class GameEngine {
     this.playerSP++;
     this.addLog(`🎉 LEVEL UP! Nível ${this.playerStats.level}! HP/MP restaurados! +1 SP`);
     import('../systems/SoundSystem').then(m => m.getSoundSystem().playLevelUp()).catch(() => {});
+    if (this.playerStats.level >= 5) this.checkAchievement('level_5', 'Veterano (Nv.5)');
+    if (this.playerStats.level >= 10) this.checkAchievement('level_10', 'Herói (Nv.10)');
     // Burst of golden rings on level up
     for (let ring = 0; ring < 5; ring++) {
       const r = new THREE.Mesh(
@@ -2377,6 +2402,18 @@ export class GameEngine {
     const ex = this.inventory.find(i => i.name === item.name);
     if (ex) ex.qty++;
     else this.inventory.push({ ...item, qty: 1 });
+  }
+
+  sortInventory() {
+    const order: Record<string, number> = { weapon: 0, armor: 1, helmet: 2, boots: 3, accessory: 4, consumable: 5 };
+    this.inventory.sort((a, b) => {
+      const aSlot = a.type.replace('equippable:', '');
+      const bSlot = b.type.replace('equippable:', '');
+      const d = (order[aSlot] ?? 9) - (order[bSlot] ?? 9);
+      return d !== 0 ? d : a.name.localeCompare(b.name);
+    });
+    this.onState(this.buildState());
+    this.addLog('🎒 Inventário organizado.');
   }
 
   useInventoryItem(name: string): boolean {
@@ -2516,6 +2553,36 @@ export class GameEngine {
 
   markTutorialSeen() { this.tutorialSeen = true; }
 
+  upgradeEquipment(): { success: boolean; msg: string } {
+    const cost = 100 + this.equipmentLevel * 150;
+    if (this.playerStats.gold < cost) {
+      return { success: false, msg: `Gold insuficiente! Precisa de ${cost}G.` };
+    }
+    if (this.equipmentLevel >= 10) {
+      return { success: false, msg: 'Equipamento já está no nível máximo (+10)!' };
+    }
+    this.playerStats.gold -= cost;
+    this.equipmentLevel++;
+    // Boost atk and def
+    const atkBoost = Math.floor(this.playerStats.atk * 0.08) + 2;
+    const defBoost = Math.floor(this.playerStats.def * 0.08) + 1;
+    this.playerStats.atk += atkBoost;
+    this.playerStats.def += defBoost;
+    this.onStatsUpdate?.(this.playerStats);
+    import('../systems/SoundSystem').then(mod => mod.getSoundSystem().playLevelUp()).catch(() => {});
+    this.checkAchievement('first_upgrade', 'Primeiro Aprimoramento');
+    if (this.equipmentLevel >= 5) this.checkAchievement('upgrade_5', 'Forja Mestre (+5)');
+    return { success: true, msg: `⚒️ Equipamento aprimorado para +${this.equipmentLevel}! (+${atkBoost} ATK, +${defBoost} DEF)` };
+  }
+
+  checkAchievement(id: string, name: string) {
+    if (this.achievements[id]) return;
+    this.achievements[id] = true;
+    this.onAchievement?.(id, name);
+    this.addLog(`🏆 Conquista desbloqueada: ${name}!`);
+    import('../systems/SoundSystem').then(mod => mod.getSoundSystem().playLevelUp()).catch(() => {});
+  }
+
   loadFromSave(save: { name?: string; level: number; xp: number; xpNext: number; gold: number; kills: number; hp: number; maxHp: number; mp: number; maxMp: number; atk: number; def: number; skills: Record<string, number>; sp: number; bossKills: number; deaths: number; tutorialSeen: boolean }) {
     Object.assign(this.playerStats, { level: save.level, xp: save.xp, xpNext: save.xpNext, gold: save.gold, kills: save.kills, hp: save.hp, maxHp: save.maxHp, mp: save.mp, maxMp: save.maxMp, atk: save.atk, def: save.def });
     if (save.name) {
@@ -2532,6 +2599,8 @@ export class GameEngine {
     if (save.sp != null) this.playerSP = save.sp;
     if ((save as any).questProgress) this.loadQuestProgress((save as any).questProgress);
     if ((save as any).inventory?.length) this.inventory = [...(save as any).inventory];
+    if ((save as any).achievements) this.achievements = (save as any).achievements;
+    if ((save as any).equipmentLevel != null) this.equipmentLevel = (save as any).equipmentLevel;
   }
 
   updateSkills(skills: Record<string, number>, sp: number) {

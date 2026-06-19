@@ -57,12 +57,23 @@ function Bar({ value, max, colors, label }: { value: number; max: number; colors
   );
 }
 
+const ALL_ACHIEVEMENTS = [
+  { id: 'first_kill', name: 'Primeiro Sangue', icon: '🗡️', desc: 'Derrote seu primeiro monstro' },
+  { id: 'first_portal', name: 'Explorador', icon: '🌀', desc: 'Entre em um portal' },
+  { id: 'level_5', name: 'Veterano', icon: '⭐', desc: 'Alcance o nível 5' },
+  { id: 'level_10', name: 'Herói', icon: '🌟', desc: 'Alcance o nível 10' },
+  { id: 'first_upgrade', name: 'Primeiro Aprimoramento', icon: '⚒️', desc: 'Aprimore um equipamento' },
+  { id: 'upgrade_5', name: 'Forja Mestre', icon: '🔥', desc: 'Aprimore equipamento até +5' },
+];
+
 const ZONE_ICONS: Record<ZoneId, string> = { city: '🏰', forest: '🌲', ice: '❄️', volcano: '🌋', desert: '🏜️', dungeon: '💀' };
 const CLASS_ICONS: Record<ClassName, string> = { warrior: '⚔️', mage: '🔮', archer: '🏹', priest: '✝️', ninja: '🌀', paladin: '🛡️', assassin: '🗡️' };
 
 // ── NPC Popup ────────────────────────────────────────────────────────────────
-function NPCPopup({ type, label, onClose, onBuy }: { type: string; label: string; onClose: () => void; onBuy: (item: string, cost: number, icon: string, desc: string) => void }) {
+function NPCPopup({ type, label, onClose, onBuy, engine }: { type: string; label: string; onClose: () => void; onBuy: (item: string, cost: number, icon: string, desc: string) => void; engine: GameEngine | null }) {
   const [boughtFlash, setBoughtFlash] = React.useState<string | null>(null);
+  const [upgradeMsg, setUpgradeMsg] = React.useState<string | null>(null);
+  const [, forceUpdate] = React.useReducer((x: number) => x + 1, 0);
   // Shop: consumables + equippable gear
   const shopItems = [
     { name: 'Poção de Vida', icon: '🧪', cost: 50, desc: '+100 HP · Consumível', tag: '💊' },
@@ -129,6 +140,24 @@ function NPCPopup({ type, label, onClose, onBuy }: { type: string; label: string
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: '60vh', overflowY: 'auto' }}>
+          {type === 'blacksmith' && engine && (
+            <div style={{ marginBottom: 6, padding: 12, background: 'linear-gradient(135deg, rgba(192,57,43,0.18), rgba(231,76,60,0.08))', border: '1px solid rgba(231,76,60,0.45)', borderRadius: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 22 }}>⚒️</span>
+                <div>
+                  <div style={{ color: '#fff', fontSize: 13, fontWeight: 700 }}>Aprimorar Equipamento</div>
+                  <div style={{ color: '#e74c3c', fontSize: 11, fontWeight: 700 }}>Nível atual: +{engine.equipmentLevel ?? 0}</div>
+                </div>
+              </div>
+              <div style={{ color: '#aaa', fontSize: 10, marginBottom: 8 }}>Cada nível aumenta ATK e DEF permanentemente. Máximo +10.</div>
+              <button onClick={() => { const r = engine.upgradeEquipment(); setUpgradeMsg(r.msg); forceUpdate(); setTimeout(() => setUpgradeMsg(null), 2500); }} style={{ width: '100%', padding: '8px', background: (engine.equipmentLevel ?? 0) >= 10 ? '#444' : 'linear-gradient(135deg, #c0392b, #e74c3c)', border: 'none', borderRadius: 8, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                {(engine.equipmentLevel ?? 0) >= 10 ? '✨ Nível Máximo Atingido' : `⚒️ Aprimorar para +${(engine.equipmentLevel ?? 0) + 1} — ${100 + (engine.equipmentLevel ?? 0) * 150}G`}
+              </button>
+              {upgradeMsg && (
+                <div style={{ marginTop: 8, padding: '5px 8px', background: 'rgba(0,0,0,0.4)', borderRadius: 6, color: '#ffd700', fontSize: 11, textAlign: 'center' }}>{upgradeMsg}</div>
+              )}
+            </div>
+          )}
           {boughtFlash && (
             <div style={{ textAlign: 'center', padding: '6px', background: 'rgba(0,255,100,0.15)', border: '1px solid rgba(0,255,100,0.4)', borderRadius: 8, color: '#00ff88', fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
               ✅ Comprado: {boughtFlash}!
@@ -461,6 +490,9 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
   const [showQuests, setShowQuests] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showClan, setShowClan] = useState(false);
+  const [showAchievements, setShowAchievements] = useState(false);
+  const [unlockedAchievements, setUnlockedAchievements] = useState<Record<string, boolean>>({});
+  const [achievementToast, setAchievementToast] = useState<{ id: string; name: string } | null>(null);
   const [showNPC, setShowNPC] = useState<{ type: string; label: string } | null>(null);
   const [skillLevels, setSkillLevels] = useState<Record<string, number>>(() => save?.skills ?? {});
   const [skillSP, setSkillSP] = useState(() => save?.sp ?? 3);
@@ -496,6 +528,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
       // Q is now camera rotation — use J for quests
       if (k === 'j') { setShowQuests(p => !p); setShowMap(false); setShowInventory(false); setShowProfile(false); }
       if (k === 'k') setShowSkills(p => !p);
+      if (k === 'v') setShowAchievements(p => !p);
       if (k === 'escape') { setShowInventory(false); setShowMap(false); setShowProfile(false); setShowSkills(false); setShowNPC(null); setShowQuests(false); }
       if (k === 'e') engine?.attackNearMonster();
       if (k === 'r') engine?.toggleAutoPlay();
@@ -521,6 +554,12 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
       engine.onClanChat = (from: string, text: string) => setClanChat(prev => [...prev.slice(-49), {from, text, ts: Date.now()}]);
       engine.onClanUpdate = (clan: any) => setPlayerClan(clan);
       engine.onClanMembers = (members: {name: string; online: boolean}[]) => setClanMembers(members);
+      engine.onAchievement = (id: string, name: string) => {
+        setUnlockedAchievements(prev => ({ ...prev, [id]: true }));
+        setAchievementToast({ id, name });
+        setTimeout(() => setAchievementToast(null), 4000);
+      };
+      if ((engine as any).achievements) setUnlockedAchievements({ ...(engine as any).achievements });
       // onStatsUpdate handled by parent re-render via engine state; kept for compatibility
       if (typeof (engine as any).onStatsUpdate === 'undefined') { (engine as any).onStatsUpdate = (_stats: {hp: number; maxHp: number; mp: number; maxMp: number}) => {}; }
     }
@@ -844,7 +883,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
           );
         })}
         {/* Panel buttons */}
-        {([['K', '📋', () => setShowSkills(p => !p), showSkills], ['J', '📜', () => setShowQuests(p => !p), showQuests], ['I', '🎒', () => setShowInventory(p => !p), showInventory], ['M', '🗺️', () => setShowMap(p => !p), showMap], ['P', '👤', () => setShowProfile(p => !p), showProfile], ['C', '⚔️', () => { setShowClan(p => !p); if (!showClan && engine?.multiWs?.readyState === 1) engine.multiWs.send(JSON.stringify({type: 'clan_members_request'})); }, showClan]] as [string, string, () => void, boolean][]).map(([key, icon, fn, active]) => (
+        {([['K', '📋', () => setShowSkills(p => !p), showSkills], ['J', '📜', () => setShowQuests(p => !p), showQuests], ['I', '🎒', () => setShowInventory(p => !p), showInventory], ['M', '🗺️', () => setShowMap(p => !p), showMap], ['P', '👤', () => setShowProfile(p => !p), showProfile], ['C', '⚔️', () => { setShowClan(p => !p); if (!showClan && engine?.multiWs?.readyState === 1) engine.multiWs.send(JSON.stringify({type: 'clan_members_request'})); }, showClan], ['V', '🏆', () => setShowAchievements(p => !p), showAchievements]] as [string, string, () => void, boolean][]).map(([key, icon, fn, active]) => (
           <button key={key} onClick={fn} style={{ width: 50, height: 50, background: active ? 'rgba(155,89,182,0.3)' : 'rgba(255,255,255,0.05)', border: `2px solid ${active ? '#9b59b6' : 'rgba(255,255,255,0.1)'}`, borderRadius: 10, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18 }}>
             {icon}<span style={{ fontSize: 7, color: '#9b59b6' }}>{key}</span>
           </button>
@@ -929,7 +968,42 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
       )}
 
       {/* PANELS */}
-      {showNPC && <NPCPopup type={showNPC.type} label={showNPC.label} onClose={() => setShowNPC(null)} onBuy={handleBuy} />}
+      {showAchievements && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 340, maxHeight: '70vh', overflowY: 'auto', background: 'linear-gradient(135deg, rgba(8,4,20,0.97), rgba(15,8,35,0.97))', border: '1px solid rgba(255,215,0,0.3)', borderRadius: 16, padding: 20, zIndex: 200, backdropFilter: 'blur(20px)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <div style={{ color: '#ffd700', fontWeight: 800, fontSize: 16 }}>🏆 Conquistas</div>
+            <button onClick={() => setShowAchievements(false)} style={{ background: 'none', border: 'none', color: '#666', fontSize: 18, cursor: 'pointer' }}>✕</button>
+          </div>
+          <div style={{ fontSize: 12, color: '#aaa', marginBottom: 12 }}>
+            {Object.values(unlockedAchievements).filter(Boolean).length} / {ALL_ACHIEVEMENTS.length} desbloqueadas
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {ALL_ACHIEVEMENTS.map(a => {
+              const unlocked = unlockedAchievements[a.id];
+              return (
+                <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', background: unlocked ? 'rgba(255,215,0,0.1)' : 'rgba(255,255,255,0.03)', border: `1px solid ${unlocked ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.06)'}`, borderRadius: 10, opacity: unlocked ? 1 : 0.5 }}>
+                  <span style={{ fontSize: 26, filter: unlocked ? 'none' : 'grayscale(1)' }}>{unlocked ? a.icon : '🔒'}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: unlocked ? '#ffd700' : '#888', fontSize: 13, fontWeight: 700 }}>{a.name}</div>
+                    <div style={{ color: '#888', fontSize: 10 }}>{a.desc}</div>
+                  </div>
+                  {unlocked && <span style={{ color: '#2ecc71', fontSize: 11, fontWeight: 700 }}>✓</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {achievementToast && (
+        <div style={{ position: 'fixed', top: 80, left: '50%', transform: 'translateX(-50%)', background: 'linear-gradient(135deg, rgba(255,215,0,0.95), rgba(243,156,18,0.95))', color: '#000', padding: '12px 24px', borderRadius: 12, zIndex: 300, fontWeight: 800, fontSize: 14, boxShadow: '0 4px 30px rgba(255,215,0,0.5)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 24 }}>🏆</span>
+          <div>
+            <div style={{ fontSize: 11, opacity: 0.7 }}>Conquista Desbloqueada!</div>
+            <div>{achievementToast.name}</div>
+          </div>
+        </div>
+      )}
+      {showNPC && <NPCPopup type={showNPC.type} label={showNPC.label} onClose={() => setShowNPC(null)} onBuy={handleBuy} engine={engine} />}
       {showQuests && <RealQuestPanel questProgress={state.questProgress} onClaim={(id) => engine?.claimQuest(id)} onClose={() => setShowQuests(false)} />}
       {showProfile && <ProfilePanel state={state} save={save} onClose={() => setShowProfile(false)} />}
       {showMap && <MapPanel currentZone={state.zone} onPortal={(z) => { engine?.enterZone(z); setShowMap(false); }} onClose={() => setShowMap(false)} />}
@@ -938,14 +1012,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center' }}>
               <div style={{ color: '#ffd700', fontWeight: 800, fontSize: 14 }}>🎒 INVENTÁRIO <span style={{ color: '#555', fontWeight: 400, fontSize: 10 }}>{(state.inventory ?? []).length}/30</span></div>
-              <button onClick={() => {
-                engine?.setInventory?.((prev: typeof state.inventory) => [...(prev ?? [])].sort((a, b) => {
-                  const order: Record<string, number> = {weapon: 0, armor: 1, helmet: 2, boots: 3, accessory: 4, consumable: 5};
-                  const aSlot = a.type?.replace('equippable:', '') ?? '';
-                  const bSlot = b.type?.replace('equippable:', '') ?? '';
-                  return (order[aSlot] ?? 9) - (order[bSlot] ?? 9);
-                }));
-              }} style={{
+              <button onClick={() => engine?.sortInventory()} style={{
                 fontSize: 11, background: '#333', border: '1px solid #555', color: '#aaa',
                 borderRadius: 4, padding: '2px 8px', cursor: 'pointer', marginLeft: 8
               }}>
@@ -1087,7 +1154,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
                   <div key={i} style={{display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0', fontSize: 12}}>
                     <div style={{width: 7, height: 7, borderRadius: '50%', background: m.online ? '#4caf50' : '#555'}} />
                     <span style={{color: m.online ? '#e0e0e0' : '#777', flex: 1}}>{m.name}</span>
-                    {playerClan.leader === playerClan.myName && (
+                    {playerClan.leader === (save?.name ?? '') && (
                       <button onClick={() => engine?.kickFromClan(m.name)} style={{
                         fontSize: 9, background: '#c0392b', border: 'none', color: '#fff',
                         borderRadius: 3, padding: '1px 4px', cursor: 'pointer'

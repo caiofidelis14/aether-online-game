@@ -398,6 +398,19 @@ wss.on('connection', (ws, req) => {
 
         broadcast({ type: 'player_join', player: { ...player, ws: undefined, role: role ?? 'player' } }, ws);
         console.log(`  → ${player.name} (${player.cls}) joined. Total: ${players.size}`);
+
+        // Send existing clan info on join
+        const joinAccounts = loadAccounts();
+        const joinAcc = joinAccounts[player.name.toLowerCase()];
+        if (joinAcc?.clan) {
+          ws.send(JSON.stringify({ type: 'clan_update', clan: joinAcc.clan }));
+          const cmMembers = joinAcc.clan.members || [];
+          const cmOnline = new Set();
+          for (const [, pl] of players) {
+            if (pl.ws.readyState === WebSocket.OPEN && cmMembers.includes(pl.name)) cmOnline.add(pl.name);
+          }
+          ws.send(JSON.stringify({ type: 'clan_members', members: cmMembers.map(n => ({ name: n, online: cmOnline.has(n) })), clanName: joinAcc.clan.name, leader: joinAcc.clan.leader }));
+        }
         break;
       }
 
@@ -503,6 +516,27 @@ wss.on('connection', (ws, req) => {
           const splitXp = Math.max(1, Math.floor(xp / Math.max(1, m.killers.size)));
           broadcastToZone(zone, { type: 'monster_dead', monsterId, xp: splitXp }, null);
         }
+        break;
+      }
+
+      case 'clan_create': {
+        const p = players.get(id);
+        if (!p) break;
+        const accounts = loadAccounts();
+        const accKey = p.name.toLowerCase();
+        const account = accounts[accKey];
+        if (!account) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Conta não encontrada.' })); break; }
+        if (account.clan) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Você já está em um clã.' })); break; }
+        const newClanName = String(msg.name || '').trim().slice(0, 24);
+        if (newClanName.length < 2) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Nome do clã muito curto.' })); break; }
+        const taken = Object.values(accounts).some(a => a.clan?.name?.toLowerCase() === newClanName.toLowerCase());
+        if (taken) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Já existe um clã com esse nome.' })); break; }
+        const leaderName = account.username || p.name;
+        account.clan = { name: newClanName, leader: leaderName, members: [] };
+        saveAccounts(accounts);
+        ws.send(JSON.stringify({ type: 'clan_update', clan: account.clan }));
+        ws.send(JSON.stringify({ type: 'clan_members', members: [], clanName: newClanName, leader: leaderName }));
+        console.log(`  ⚔️ ${leaderName} criou o clã "${newClanName}"`);
         break;
       }
 
