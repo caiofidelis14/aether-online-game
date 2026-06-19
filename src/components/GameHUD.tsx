@@ -460,6 +460,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [showQuests, setShowQuests] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showClan, setShowClan] = useState(false);
   const [showNPC, setShowNPC] = useState<{ type: string; label: string } | null>(null);
   const [skillLevels, setSkillLevels] = useState<Record<string, number>>(() => save?.skills ?? {});
   const [skillSP, setSkillSP] = useState(() => save?.sp ?? 3);
@@ -470,6 +471,16 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
   const [showSkins, setShowSkins] = useState(false);
   const [musicVol, setMusicVol] = useState(() => { try { return getSoundSystem().getMusicVolume(); } catch { return 0.25; } });
   const [sfxVol, setSfxVol]     = useState(() => { try { return getSoundSystem().getSfxVolume(); } catch { return 0.7; } });
+  // Chat & notifications
+  const [chatMessages, setChatMessages] = React.useState<{from: string; text: string; ts: number}[]>([]);
+  const [chatInput, setChatInput] = React.useState('');
+  const [showChat, setShowChat] = React.useState(true);
+  const [notifications, setNotifications] = React.useState<{text: string; id: number}[]>([]);
+  // Clan state
+  const [playerClan, setPlayerClan] = React.useState<any>(null);
+  const [clanMembers, setClanMembers] = React.useState<{name: string; online: boolean}[]>([]);
+  const [clanChat, setClanChat] = React.useState<{from: string; text: string; ts: number}[]>([]);
+  const [clanChatInput, setClanChatInput] = React.useState('');
   const prevLevel = useRef(state.playerLevel);
   const cls = state.playerClass;
   const skills = skillsArray(SKILL_TREES[cls]);
@@ -501,6 +512,18 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
+  }, [engine]);
+
+  // Engine callbacks for chat, clan, stats
+  useEffect(() => {
+    if (engine) {
+      engine.onChat = (from: string, text: string) => setChatMessages(prev => [...prev.slice(-49), {from, text, ts: Date.now()}]);
+      engine.onClanChat = (from: string, text: string) => setClanChat(prev => [...prev.slice(-49), {from, text, ts: Date.now()}]);
+      engine.onClanUpdate = (clan: any) => setPlayerClan(clan);
+      engine.onClanMembers = (members: {name: string; online: boolean}[]) => setClanMembers(members);
+      // onStatsUpdate handled by parent re-render via engine state; kept for compatibility
+      if (typeof (engine as any).onStatsUpdate === 'undefined') { (engine as any).onStatsUpdate = (_stats: {hp: number; maxHp: number; mp: number; maxMp: number}) => {}; }
+    }
   }, [engine]);
 
   // SP: gain 1 per level-up
@@ -605,6 +628,13 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
     engine?.setQuestTarget(q.targetMonster ?? null, q.zone);
     setShowQuests(false);
   };
+
+  // Toast notification helper
+  const addNotification = React.useCallback((text: string) => {
+    const id = Date.now() + Math.random();
+    setNotifications(prev => [...prev.slice(-4), {text, id}]);
+    setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 3000);
+  }, []);
 
   const hpPct = state.playerHp / state.playerMaxHp;
   const hpColor = hpPct > 0.5 ? '#2ecc71' : hpPct > 0.25 ? '#f39c12' : '#e74c3c';
@@ -720,14 +750,18 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
         );
       })()}
 
-      {/* COMBAT LOG */}
-      {state.combatLog.length > 0 && (
-        <div style={{ position: 'absolute', bottom: 80, right: 10, width: 250, background: 'rgba(0,0,0,0.75)', borderRadius: 10, padding: '8px 10px', backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.06)', zIndex: 10, pointerEvents: 'none' }}>
-          {state.combatLog.slice(0, 5).map((log, i) => (
-            <div key={i} style={{ fontSize: 10, color: i === 0 ? '#fff' : '#888', marginBottom: 2, opacity: 1 - i * 0.18 }}>{log}</div>
-          ))}
-        </div>
-      )}
+      {/* NOTIFICATIONS (replaces combat log feed) */}
+      <div style={{position: 'fixed', left: 10, bottom: 160, display: 'flex', flexDirection: 'column', gap: 4, pointerEvents: 'none', zIndex: 150}}>
+        {notifications.map(n => (
+          <div key={n.id} style={{
+            background: 'rgba(0,0,0,0.8)', color: '#e0e0e0', padding: '4px 10px',
+            borderRadius: 6, fontSize: 12, borderLeft: '3px solid #f39c12',
+            animation: 'fadeIn 0.2s ease'
+          }}>
+            {n.text}
+          </div>
+        ))}
+      </div>
 
       {/* ZONE BANNER */}
       {state.zone !== 'city' && (
@@ -810,7 +844,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
           );
         })}
         {/* Panel buttons */}
-        {([['K', '📋', () => setShowSkills(p => !p), showSkills], ['J', '📜', () => setShowQuests(p => !p), showQuests], ['I', '🎒', () => setShowInventory(p => !p), showInventory], ['M', '🗺️', () => setShowMap(p => !p), showMap], ['P', '👤', () => setShowProfile(p => !p), showProfile]] as [string, string, () => void, boolean][]).map(([key, icon, fn, active]) => (
+        {([['K', '📋', () => setShowSkills(p => !p), showSkills], ['J', '📜', () => setShowQuests(p => !p), showQuests], ['I', '🎒', () => setShowInventory(p => !p), showInventory], ['M', '🗺️', () => setShowMap(p => !p), showMap], ['P', '👤', () => setShowProfile(p => !p), showProfile], ['C', '⚔️', () => { setShowClan(p => !p); if (!showClan && engine?.multiWs?.readyState === 1) engine.multiWs.send(JSON.stringify({type: 'clan_members_request'})); }, showClan]] as [string, string, () => void, boolean][]).map(([key, icon, fn, active]) => (
           <button key={key} onClick={fn} style={{ width: 50, height: 50, background: active ? 'rgba(155,89,182,0.3)' : 'rgba(255,255,255,0.05)', border: `2px solid ${active ? '#9b59b6' : 'rgba(255,255,255,0.1)'}`, borderRadius: 10, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18 }}>
             {icon}<span style={{ fontSize: 7, color: '#9b59b6' }}>{key}</span>
           </button>
@@ -902,7 +936,22 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
       {showInventory && (
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 380, background: 'linear-gradient(135deg, rgba(8,4,20,0.98), rgba(15,8,35,0.98))', border: '1px solid rgba(255,215,0,0.2)', borderRadius: 16, padding: 20, zIndex: 200, backdropFilter: 'blur(20px)', boxShadow: '0 0 40px rgba(155,89,182,0.2)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-            <div style={{ color: '#ffd700', fontWeight: 800, fontSize: 14 }}>🎒 INVENTÁRIO <span style={{ color: '#555', fontWeight: 400, fontSize: 10 }}>{(state.inventory ?? []).length}/30</span></div>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+              <div style={{ color: '#ffd700', fontWeight: 800, fontSize: 14 }}>🎒 INVENTÁRIO <span style={{ color: '#555', fontWeight: 400, fontSize: 10 }}>{(state.inventory ?? []).length}/30</span></div>
+              <button onClick={() => {
+                engine?.setInventory?.((prev: typeof state.inventory) => [...(prev ?? [])].sort((a, b) => {
+                  const order: Record<string, number> = {weapon: 0, armor: 1, helmet: 2, boots: 3, accessory: 4, consumable: 5};
+                  const aSlot = a.type?.replace('equippable:', '') ?? '';
+                  const bSlot = b.type?.replace('equippable:', '') ?? '';
+                  return (order[aSlot] ?? 9) - (order[bSlot] ?? 9);
+                }));
+              }} style={{
+                fontSize: 11, background: '#333', border: '1px solid #555', color: '#aaa',
+                borderRadius: 4, padding: '2px 8px', cursor: 'pointer', marginLeft: 8
+              }}>
+                Organizar
+              </button>
+            </div>
             <button onClick={() => { setShowInventory(false); setSelectedInvItem(null); }} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 16 }}>✕</button>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 6, marginBottom: 14 }}>
@@ -912,6 +961,17 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
               return (
                 <div key={i}
                   onClick={() => item && setSelectedInvItem(isSel ? null : item.name)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (!item) return;
+                    if (item.type === 'consumable') {
+                      engine?.useInventoryItem(item.name);
+                    } else if (item.type.startsWith('equippable:')) {
+                      const slot = item.type.split(':')[1];
+                      engine?.equipItem(item.name, item.icon, slot);
+                    }
+                  }}
+                  title={item ? (item.type.startsWith('equippable:') || item.type === 'consumable' ? 'Clique direito para equipar/usar' : item.name) : undefined}
                   style={{ width: '100%', aspectRatio: '1', background: isSel ? 'rgba(255,215,0,0.15)' : item ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.03)', border: `1px solid ${isSel ? 'rgba(255,215,0,0.5)' : item ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)'}`, borderRadius: 7, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: item ? 'pointer' : 'default', position: 'relative', transition: 'all 0.15s' }}>
                   {item && <>
                     <span style={{ fontSize: 18 }}>{item.icon}</span>
@@ -947,6 +1007,144 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
           })()}
           {(state.inventory ?? []).length === 0 && <div style={{ fontSize: 11, color: '#555', textAlign: 'center', padding: 10 }}>Inventário vazio — compre itens nas lojas [F]</div>}
           <div style={{ fontSize: 9, color: '#444', textAlign: 'center', letterSpacing: 1 }}>CLIQUE NO ITEM · [I] FECHAR</div>
+        </div>
+      )}
+
+      {/* Global Chat */}
+      <div style={{
+        position: 'fixed', right: 10, bottom: 60, width: 250, zIndex: 100,
+      }}>
+        {showChat && (
+          <div style={{
+            background: 'rgba(0,0,0,0.75)', borderRadius: 8, padding: '6px 10px',
+            maxHeight: 160, overflowY: 'auto', marginBottom: 4, border: '1px solid #333'
+          }}>
+            {chatMessages.length === 0 && <div style={{fontSize:11, color:'#555', textAlign:'center'}}>Nenhuma mensagem ainda</div>}
+            {chatMessages.slice(-20).map((m, i) => (
+              <div key={i} style={{fontSize: 12, color: '#e0e0e0', marginBottom: 2, wordBreak: 'break-word'}}>
+                <span style={{color: '#4fc3f7', fontWeight: 600}}>{m.from}: </span>
+                <span>{m.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{display: 'flex', gap: 4}}>
+          <input
+            placeholder="Chat global... (Enter para enviar)"
+            value={chatInput}
+            onChange={e => setChatInput(e.target.value)}
+            onFocus={() => setShowChat(true)}
+            onKeyDown={e => {
+              e.stopPropagation();
+              if (e.key === 'Enter' && chatInput.trim()) {
+                engine?.sendChat(chatInput.trim());
+                setChatInput('');
+              }
+              if (e.key === 'Escape') setShowChat(false);
+            }}
+            style={{
+              flex: 1, background: 'rgba(0,0,0,0.8)', border: '1px solid #444',
+              borderRadius: 6, color: '#fff', padding: '5px 8px', fontSize: 12,
+              outline: 'none'
+            }}
+          />
+          <button onClick={() => setShowChat(v => !v)} style={{
+            background: 'rgba(0,0,0,0.7)', border: '1px solid #444', color: '#aaa',
+            borderRadius: 6, padding: '4px 8px', cursor: 'pointer', fontSize: 12
+          }}>
+            {showChat ? '▼' : '▲'}
+          </button>
+        </div>
+      </div>
+
+      {/* Clan Panel */}
+      {showClan && (
+        <div style={{
+          position: 'fixed', right: 10, top: 60, width: 220, maxHeight: 500,
+          background: 'rgba(10,10,25,0.96)', border: '1px solid #4433aa',
+          borderRadius: 10, padding: 12, zIndex: 200, overflowY: 'auto'
+        }}>
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8}}>
+            <div style={{color: '#9b59b6', fontWeight: 700, fontSize: 13}}>⚔️ CLÃ</div>
+            <button onClick={() => setShowClan(false)} style={{background: 'none', border: 'none', color: '#666', fontSize: 16, cursor: 'pointer'}}>✕</button>
+          </div>
+          {playerClan ? (
+            <>
+              <div style={{color: '#9b59b6', fontWeight: 700, fontSize: 15, marginBottom: 4}}>
+                ⚔️ {playerClan.name}
+              </div>
+              <div style={{fontSize: 11, color: '#888', marginBottom: 8}}>Líder: {playerClan.leader}</div>
+
+              {/* Members */}
+              <div style={{fontSize: 11, color: '#aaa', marginBottom: 4}}>Membros ({clanMembers.length + 1}):</div>
+              <div style={{maxHeight: 130, overflowY: 'auto', marginBottom: 8}}>
+                {/* Leader */}
+                <div style={{display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0', fontSize: 12}}>
+                  <div style={{width: 7, height: 7, borderRadius: '50%', background: '#f1c40f'}} />
+                  <span style={{color: '#f1c40f'}}>👑 {playerClan.leader}</span>
+                </div>
+                {clanMembers.map((m, i) => (
+                  <div key={i} style={{display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0', fontSize: 12}}>
+                    <div style={{width: 7, height: 7, borderRadius: '50%', background: m.online ? '#4caf50' : '#555'}} />
+                    <span style={{color: m.online ? '#e0e0e0' : '#777', flex: 1}}>{m.name}</span>
+                    {playerClan.leader === playerClan.myName && (
+                      <button onClick={() => engine?.kickFromClan(m.name)} style={{
+                        fontSize: 9, background: '#c0392b', border: 'none', color: '#fff',
+                        borderRadius: 3, padding: '1px 4px', cursor: 'pointer'
+                      }}>X</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Invite */}
+              <div style={{display: 'flex', gap: 4, marginBottom: 8}}>
+                <input placeholder="Convidar jogador..." id="clanInviteInput"
+                  onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter') { const v = (document.getElementById('clanInviteInput') as HTMLInputElement)?.value; if (v) { engine?.inviteToClan(v); (document.getElementById('clanInviteInput') as HTMLInputElement).value = ''; } } }}
+                  style={{flex: 1, background: 'rgba(255,255,255,0.08)', border: '1px solid #444', borderRadius: 4, color: '#fff', padding: '3px 6px', fontSize: 11}} />
+                <button onClick={() => { const v = (document.getElementById('clanInviteInput') as HTMLInputElement)?.value; if (v) { engine?.inviteToClan(v); (document.getElementById('clanInviteInput') as HTMLInputElement).value = ''; } }}
+                  style={{background: '#4433aa', border: 'none', color: '#fff', borderRadius: 4, padding: '3px 8px', fontSize: 11, cursor: 'pointer'}}>
+                  +
+                </button>
+              </div>
+
+              {/* Clan chat */}
+              <div style={{borderTop: '1px solid #333', paddingTop: 8}}>
+                <div style={{fontSize: 11, color: '#888', marginBottom: 4}}>Chat do Clã</div>
+                <div style={{maxHeight: 80, overflowY: 'auto', marginBottom: 4}}>
+                  {clanChat.slice(-10).map((m, i) => (
+                    <div key={i} style={{fontSize: 11, color: '#e0e0e0', marginBottom: 1, wordBreak: 'break-word'}}>
+                      <span style={{color: '#9b59b6'}}>{m.from}: </span>{m.text}
+                    </div>
+                  ))}
+                </div>
+                <input placeholder="Mensagem do clã..." value={clanChatInput}
+                  onChange={e => setClanChatInput(e.target.value)}
+                  onKeyDown={e => { e.stopPropagation(); if (e.key === 'Enter' && clanChatInput.trim()) { engine?.sendClanChat(clanChatInput.trim()); setClanChatInput(''); } }}
+                  style={{width: '100%', background: 'rgba(255,255,255,0.08)', border: '1px solid #444', borderRadius: 4, color: '#fff', padding: '4px 6px', fontSize: 11, boxSizing: 'border-box'}} />
+              </div>
+
+              <button onClick={() => engine?.leaveClan()} style={{
+                width: '100%', marginTop: 8, background: '#1a1a1a', border: '1px solid #c0392b',
+                color: '#e74c3c', borderRadius: 4, padding: '5px', fontSize: 11, cursor: 'pointer'
+              }}>Sair do Clã</button>
+            </>
+          ) : (
+            <>
+              <div style={{color: '#9b59b6', fontWeight: 700, fontSize: 15, marginBottom: 10}}>⚔️ Clãs</div>
+              <p style={{fontSize: 12, color: '#777', marginBottom: 10}}>Você não está em nenhum clã.</p>
+              <input placeholder="Nome do novo clã" id="newClanInput"
+                onKeyDown={e => e.stopPropagation()}
+                style={{width: '100%', marginBottom: 6, background: 'rgba(255,255,255,0.08)', border: '1px solid #555', borderRadius: 4, color: '#fff', padding: '6px 8px', fontSize: 12, boxSizing: 'border-box'}} />
+              <button onClick={() => {
+                const v = (document.getElementById('newClanInput') as HTMLInputElement)?.value?.trim();
+                if (v) engine?.createClan(v);
+              }} style={{
+                width: '100%', background: '#4433aa', border: 'none', color: '#fff',
+                borderRadius: 4, padding: '7px', cursor: 'pointer', fontSize: 12
+              }}>Criar Clã</button>
+            </>
+          )}
         </div>
       )}
 

@@ -315,6 +315,27 @@ ${url ? `<p>URL atual:</p><a href="${url}" target="_blank">${url}</a>
   }
 });
 
+// ── Zone monster HP tracking for shared combat ────────────────────────────────
+const zoneMonsters = new Map(); // zoneId -> Map<monsterId, monster state>
+
+function getMonsterState(zoneId, monsterId, maxHp = 100) {
+  if (!zoneMonsters.has(zoneId)) zoneMonsters.set(zoneId, new Map());
+  const zone = zoneMonsters.get(zoneId);
+  if (!zone.has(monsterId)) {
+    zone.set(monsterId, { hp: maxHp, maxHp, dead: false, killers: new Set(), respawnAt: 0 });
+  }
+  return zone.get(monsterId);
+}
+
+function broadcastToZone(zoneId, msg, excludeWs = null) {
+  const json = JSON.stringify(msg);
+  for (const [, p] of players) {
+    if (p.ws !== excludeWs && p.ws.readyState === WebSocket.OPEN && p.zone === zoneId) {
+      p.ws.send(json);
+    }
+  }
+}
+
 // ── WebSocket Server ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer, path: undefined });
 
@@ -348,6 +369,7 @@ wss.on('connection', (ws, req) => {
       case 'join': {
         const player = {
           id,
+          ws,
           name: String(msg.name || 'Herói').slice(0, 24),
           cls: msg.cls || 'warrior',
           level: msg.level || 1,
@@ -370,11 +392,11 @@ wss.on('connection', (ws, req) => {
         ws.send(JSON.stringify({
           type: 'init',
           myId: id,
-          players: [...players.values()].filter(p => p.id !== id),
+          players: [...players.values()].filter(p => p.id !== id).map(({ ws: _ws, ...rest }) => rest),
           role: role ?? 'player',
         }));
 
-        broadcast({ type: 'player_join', player: { ...player, role: role ?? 'player' } }, ws);
+        broadcast({ type: 'player_join', player: { ...player, ws: undefined, role: role ?? 'player' } }, ws);
         console.log(`  → ${player.name} (${player.cls}) joined. Total: ${players.size}`);
         break;
       }
@@ -459,6 +481,139 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
+      case 'monster_hit': {
+        const { zone, monsterId, damage = 10, maxHp = 100 } = msg;
+        if (!zone || monsterId === undefined) break;
+        const m = getMonsterState(zone, monsterId, maxHp);
+        if (m.dead) {
+          ws.send(JSON.stringify({ type: 'monster_hp', monsterId, hp: 0, dead: true }));
+          break;
+        }
+        m.hp = Math.max(0, m.hp - damage);
+        const p = players.get(id);
+        if (p?.name) m.killers.add(p.name);
+
+        // Broadcast HP update to all others in zone
+        broadcastToZone(zone, { type: 'monster_hp', monsterId, hp: m.hp, maxHp: m.maxHp }, ws);
+
+        if (m.hp <= 0 && !m.dead) {
+          m.dead = true;
+          m.respawnAt = Date.now() + 30000;
+          const xp = Math.max(5, Math.floor(maxHp * 0.8));
+          const splitXp = Math.max(1, Math.floor(xp / Math.max(1, m.killers.size)));
+          broadcastToZone(zone, { type: 'monster_dead', monsterId, xp: splitXp }, null);
+        }
+        break;
+      }
+
+      case 'clan_chat': {
+        const p = players.get(id);
+        if (!p) break;
+        const accounts = loadAccounts();
+        const accountKey = p.name.toLowerCase();
+        const account = accounts[accountKey];
+        if (!account?.clan) break;
+        const clanName = account.clan.name;
+        const clanMsg = JSON.stringify({ type: 'clan_chat', from: account.username || p.name, text: (msg.text || '').slice(0, 200), ts: Date.now() });
+        for (const [, pl] of players) {
+          if (pl.ws.readyState !== WebSocket.OPEN) continue;
+          const pAcc = accounts[pl.name.toLowerCase()];
+          if (pAcc?.clan?.name === clanName) pl.ws.send(clanMsg);
+        }
+        break;
+      }
+
+      case 'clan_invite': {
+        const p = players.get(id);
+        if (!p) break;
+        const accounts = loadAccounts();
+        const inviter = accounts[p.name.toLowerCase()];
+        if (!inviter?.clan) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Você não tem um clã.' })); break; }
+        const targetName = msg.target;
+        const targetKey = targetName?.toLowerCase();
+        const targetAcc = targetKey ? accounts[targetKey] : null;
+        if (!targetAcc) { ws.send(JSON.stringify({ type: 'clan_error', msg: 'Jogador não encontrado.' })); break; }
+        if (!inviter.clan.members) inviter.clan.members = [];
+        if (!inviter.clan.members.includes(targetAcc.username || targetName)) {
+          inviter.clan.members.push(targetAcc.username || targetName);
+        }
+        targetAcc.clan = { name: inviter.clan.name, leader: inviter.clan.leader, members: [...inviter.clan.members] };
+        saveAccounts(accounts);
+        ws.send(JSON.stringify({ type: 'clan_update', clan: inviter.clan }));
+        // Notify target if online
+        for (const [, pl] of players) {
+          if (pl.ws.readyState === WebSocket.OPEN && pl.name.toLowerCase() === targetKey) {
+            pl.ws.send(JSON.stringify({ type: 'clan_invited', clan: targetAcc.clan }));
+          }
+        }
+        break;
+      }
+
+      case 'clan_kick': {
+        const p = players.get(id);
+        if (!p) break;
+        const accounts = loadAccounts();
+        const kicker = accounts[p.name.toLowerCase()];
+        if (!kicker?.clan || kicker.clan.leader !== (kicker.username || p.name)) {
+          ws.send(JSON.stringify({ type: 'clan_error', msg: 'Sem permissão.' })); break;
+        }
+        const target = msg.target;
+        kicker.clan.members = (kicker.clan.members || []).filter(m => m !== target);
+        for (const [, acc] of Object.entries(accounts)) {
+          if ((acc.username === target || acc.username === target) && acc.clan?.name === kicker.clan.name) {
+            acc.clan = null; break;
+          }
+        }
+        saveAccounts(accounts);
+        ws.send(JSON.stringify({ type: 'clan_update', clan: kicker.clan }));
+        break;
+      }
+
+      case 'clan_leave': {
+        const p = players.get(id);
+        if (!p) break;
+        const accounts = loadAccounts();
+        const acc = accounts[p.name.toLowerCase()];
+        if (!acc?.clan) break;
+        const clanName = acc.clan.name;
+        const isLeader = acc.clan.leader === (acc.username || p.name);
+        if (isLeader) {
+          for (const [, a] of Object.entries(accounts)) { if (a.clan?.name === clanName) a.clan = null; }
+        } else {
+          for (const [, a] of Object.entries(accounts)) {
+            if ((a.username || '') !== (acc.username || p.name) && a.clan?.name === clanName && a.clan.members) {
+              a.clan.members = a.clan.members.filter(m => m !== (acc.username || p.name));
+            }
+          }
+          acc.clan = null;
+        }
+        saveAccounts(accounts);
+        ws.send(JSON.stringify({ type: 'clan_update', clan: null }));
+        break;
+      }
+
+      case 'clan_members_request': {
+        const p = players.get(id);
+        if (!p) break;
+        const accounts = loadAccounts();
+        const acc = accounts[p.name.toLowerCase()];
+        if (!acc?.clan) break;
+        const members = acc.clan.members || [];
+        const onlineSet = new Set();
+        for (const [, pl] of players) {
+          if (pl.ws.readyState === WebSocket.OPEN && members.includes(pl.name)) {
+            onlineSet.add(pl.name);
+          }
+        }
+        ws.send(JSON.stringify({
+          type: 'clan_members',
+          members: members.map(n => ({ name: n, online: onlineSet.has(n) })),
+          clanName: acc.clan.name,
+          leader: acc.clan.leader,
+        }));
+        break;
+      }
+
       case 'ping':
         ws.send(JSON.stringify({ type: 'pong' }));
         break;
@@ -476,6 +631,18 @@ wss.on('connection', (ws, req) => {
     console.error(`[!] WS error id=${id}:`, err.message);
   });
 });
+
+// ── Monster respawn ticker ────────────────────────────────────────────────────
+setInterval(() => {
+  for (const [zoneId, zone] of zoneMonsters) {
+    for (const [monsterId, m] of zone) {
+      if (m.dead && m.respawnAt && Date.now() > m.respawnAt) {
+        m.hp = m.maxHp; m.dead = false; m.killers.clear(); m.respawnAt = 0;
+        broadcastToZone(zoneId, { type: 'monster_respawn', monsterId }, null);
+      }
+    }
+  }
+}, 5000);
 
 initStorage().then(() => {
   httpServer.listen(PORT, '0.0.0.0', () => {

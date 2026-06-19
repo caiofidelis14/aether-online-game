@@ -133,7 +133,7 @@ const ZONES: Record<ZoneId, {
 };
 
 const ZONE_ORDER: ZoneId[] = ['forest', 'ice', 'volcano', 'desert', 'dungeon'];
-const PORTAL_POSITIONS: [number, number][] = [[-18, -22], [18, -22], [-22, 0], [22, 0], [0, -28]];
+const PORTAL_POSITIONS: [number, number][] = [[-30, -25], [-15, -28], [0, -30], [15, -28], [30, -25]];
 
 const CLASS_COLORS: Record<ClassName, number> = {
   warrior: 0xe74c3c, mage: 0x9b59b6, archer: 0x27ae60, priest: 0xf1c40f,
@@ -228,6 +228,10 @@ export class GameEngine {
   rainParticles: THREE.Points | null = null;
   sandParticles: THREE.Points | null = null;
 
+  regenTimer = 0;
+  walkCycle = 0;
+  projectiles: Array<{mesh: THREE.Mesh; target: any; speed: number; dmg: number}> = [];
+
   // Camera
   camDist = CAM_DIST_DEFAULT;
   camAngle = Math.PI / 4;
@@ -265,6 +269,14 @@ export class GameEngine {
   multiChatQueue: string[] = [];
   playerRole = 'player';
   currentSkin = 'default';
+
+  // Callbacks for chat and clan events
+  onChat?: (from: string, text: string) => void;
+  onClanChat?: (from: string, text: string) => void;
+  onClanUpdate?: (clan: any) => void;
+  onClanMembers?: (members: any[]) => void;
+  onStatsUpdate?: (stats: { hp: number; maxHp: number; mp: number; maxMp: number; xp: number; xpNext: number; level: number; gold: number; kills: number; totalXp: number; atk: number; def: number; className: ClassName; name: string }) => void;
+  onMonsterDead?: (m: any) => void;
 
   playerStats = {
     hp: 200, maxHp: 200, mp: 100, maxMp: 100, xp: 0, xpNext: 100,
@@ -404,6 +416,23 @@ export class GameEngine {
     this.buildCityPortals();
     this.buildCityNPCs();
     this.buildNatureTrees(0, 0, 50, 130, 70, 0x2d7a2d, 'round', this.cityGroup);
+
+    // Scatter rocks around city perimeter for a more natural world feel
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      const r = 35 + (i % 3) * 8;
+      const rx = Math.cos(angle) * r;
+      const rz = Math.sin(angle) * r;
+      const rock = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.4 + (i % 3) * 0.3, 0),
+        new THREE.MeshPhongMaterial({ color: 0x666655 + (i * 0x010101 % 0x0f0f0f) })
+      );
+      rock.position.set(rx, 0.2, rz);
+      rock.rotation.set((i * 0.3) % 0.5, (i * 1.1) % Math.PI, (i * 0.7) % 0.5);
+      rock.castShadow = true;
+      this.cityGroup.add(rock);
+    }
+
     this.buildMountains();
     this.buildSky();
     this.initQuests();
@@ -463,6 +492,35 @@ export class GameEngine {
     for (let i = -2; i <= 2; i++) {
       this.addStall(i * 5.5, -10, [0xe74c3c,0x27ae60,0x3498db,0xf39c12,0x9b59b6][i+2]);
       this.addStall(i * 5.5, 10, [0xe67e22,0x1abc9c,0xe91e8c,0x00bcd4,0xff5722][i+2]);
+    }
+
+    // ── Building Badge Labels ─────────────────────────────────────────────────
+    if (typeof document !== 'undefined') {
+      const addBadge = (label: string, x: number, y: number, z: number, color: number) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 192; canvas.height = 64;
+        const ctx = canvas.getContext('2d')!;
+        ctx.clearRect(0, 0, 192, 64);
+        ctx.fillStyle = `#${color.toString(16).padStart(6, '0')}cc`;
+        ctx.beginPath();
+        if (ctx.roundRect) { ctx.roundRect(4, 4, 184, 56, 10); } else { ctx.rect(4, 4, 184, 56); }
+        ctx.fill();
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 22px Arial';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(label, 96, 32);
+        const texture = new THREE.CanvasTexture(canvas);
+        const mat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+        const sprite = new THREE.Sprite(mat);
+        sprite.position.set(x, y, z);
+        sprite.scale.set(4, 1.4, 1);
+        this.cityGroup.add(sprite);
+      };
+      addBadge('BANCO', 18, 10.5, 11, 0x1a5276);
+      addBadge('TAVERNA', -18, 10.5, 17, 0x6e2f0a);
+      addBadge('MAGIA', -22, 20, -18, 0x4a0080);
+      addBadge('ARENA', 20, 8, -16, 0x4a4a4a);
+      addBadge('MERCADO', 0, 5, -7, 0x1a6b1a);
     }
 
     // ── Street Lamps ──────────────────────────────────────────────────────────
@@ -739,6 +797,30 @@ export class GameEngine {
     for (const dx of [-1.45, 1.45]) {
       const p = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 2.1, 4), wood); p.position.set(x + dx, 1.05, z - 0.85); this.cityGroup.add(p);
     }
+
+    // Merchant NPC behind the stall
+    const npcGroup = new THREE.Group();
+    npcGroup.position.set(x, 0, z + 0.8);
+    // Body
+    const body = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.22, 0.25, 0.7, 8),
+      new THREE.MeshPhongMaterial({ color })
+    );
+    body.position.y = 0.55; npcGroup.add(body);
+    // Head
+    const head = new THREE.Mesh(
+      new THREE.SphereGeometry(0.2, 8, 8),
+      new THREE.MeshPhongMaterial({ color: 0xf5cba7 })
+    );
+    head.position.y = 1.1; npcGroup.add(head);
+    // Hat (small cone in stall color)
+    const hat = new THREE.Mesh(
+      new THREE.ConeGeometry(0.22, 0.3, 8),
+      new THREE.MeshPhongMaterial({ color })
+    );
+    hat.position.y = 1.4; npcGroup.add(hat);
+    npcGroup.name = 'merchantNPC';
+    this.cityGroup.add(npcGroup);
   }
 
   // ── ZONES ────────────────────────────────────────────────────────────────
@@ -1368,7 +1450,30 @@ export class GameEngine {
     this.updateDmgNumbers(dt);
     this.updateAtmosphere(dt);
     this.updateNPCWalkers(dt);
+    // Animate merchant NPCs (gentle bob + sway)
+    if (this.cityGroup.visible) {
+      const t = this.animTime;
+      this.cityGroup.traverse(child => {
+        if (child.name === 'merchantNPC') {
+          child.position.y = Math.sin(t * 1.2 + child.position.x) * 0.04;
+          child.rotation.y = Math.sin(t * 0.5 + child.position.z * 0.3) * 0.3;
+        }
+      });
+    }
     this.updateLootDrops(dt);
+    // Projectile updates
+    for (let i = this.projectiles.length - 1; i >= 0; i--) {
+      const p = this.projectiles[i];
+      if (p.target.state === 'dead') { this.scene.remove(p.mesh); this.projectiles.splice(i, 1); continue; }
+      const tPos = p.target.pos.clone().setY(1.5);
+      const dir = tPos.clone().sub(p.mesh.position).normalize();
+      p.mesh.position.addScaledVector(dir, p.speed * dt);
+      if (p.mesh.position.distanceTo(tPos) < 0.7) {
+        this.dealDamageToMonster(p.target, p.dmg);
+        this.scene.remove(p.mesh);
+        this.projectiles.splice(i, 1);
+      }
+    }
     this.smoothCamera();
     this.updateAutoPlay(dt);
     this.updatePortalAnimations(dt);
@@ -1384,6 +1489,19 @@ export class GameEngine {
       this.multiSendTimer = 0;
       this.multiWs.send(JSON.stringify({ type: 'move', x: +this.playerPos.x.toFixed(2), z: +this.playerPos.z.toFixed(2), dir: +Math.atan2(this.playerDir.x, this.playerDir.z).toFixed(3), zone: this.currentZone }));
     }
+    // HP/MP regen
+    this.regenTimer += dt;
+    if (this.regenTimer >= 3) {
+      this.regenTimer = 0;
+      if (this.playerStats.hp < this.playerStats.maxHp) {
+        this.playerStats.hp = Math.min(this.playerStats.maxHp, this.playerStats.hp + Math.max(1, Math.floor(this.playerStats.maxHp * 0.015)));
+      }
+      if (this.playerStats.mp < this.playerStats.maxMp) {
+        this.playerStats.mp = Math.min(this.playerStats.maxMp, this.playerStats.mp + Math.max(1, Math.floor(this.playerStats.maxMp * 0.025)));
+      }
+      this.onStatsUpdate?.(this.playerStats);
+    }
+
     // Interpolate remote players
     for (const rp of this.remotePlayers.values()) {
       rp.pos.lerp(rp.targetPos, Math.min(1, dt * 10));
@@ -1905,26 +2023,68 @@ export class GameEngine {
   }
 
   // ── PUBLIC API ────────────────────────────────────────────────────────────
-  attackNearMonster() {
-    const m = this.getNearMonster(); if (!m) return;
-    if (!m.aggroed) m.aggroed = true;
-    import('../systems/SoundSystem').then(mod => mod.getSoundSystem().playAttack()).catch(() => {});
-    this.attacking = true; this.attackAnim = 0;
-    this.attackTarget = m.pos.clone().add(new THREE.Vector3(0, 0.8, 0));
-    const isCrit = Math.random() < 0.22;
-    const dmg = Math.max(1, Math.floor(this.playerStats.atk * (1 + Math.random() * 0.5)) - m.def) * (isCrit ? 2 : 1);
-    m.hp = Math.max(0, m.hp - dmg); m.hitFlashTimer = isCrit ? 0.35 : 0.18;
-    const col = isCrit ? '#ffd700' : '#ff4444';
-    // Bigger hit burst for crits
-    if (isCrit) {
-      this.triggerCameraShake(0.25);
-      for (let k = 0; k < 3; k++) this.spawnHitEffect(m.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*1.2, k*0.4+0.3, (Math.random()-0.5)*1.2)), CLASS_COLORS[this.playerStats.className]);
-    } else {
-      this.spawnHitEffect(m.pos.clone().add(new THREE.Vector3(0, 0.6, 0)), CLASS_COLORS[this.playerStats.className]);
+  private dealDamageToMonster(m: any, dmg: number) {
+    m.hp -= dmg;
+    m.aggroed = true; m.chaseTimer = 0;
+    m.hitFlashTimer = 0.12;
+    import('../systems/SoundSystem').then(mod => mod.getSoundSystem().playHit()).catch(() => {});
+    this.spawnDmgNumber(m.pos.clone().add(new THREE.Vector3(0, 2, 0)), dmg, '#ff4444');
+    if (m.hp <= 0) {
+      this.onMonsterDead?.(m);
+      this.killMonster(m);
     }
-    this.spawnDmgNumber(m.pos.clone().add(new THREE.Vector3(0, 2, 0)), dmg, col);
-    this.addLog(isCrit ? `⚡ CRÍTICO! -${dmg} em ${m.name}!` : `⚔️ -${dmg} em ${m.name}`);
-    if (m.hp <= 0) this.killMonster(m);
+  }
+
+  attackNearMonster() {
+    const cls = (this.playerStats.className || '').toLowerCase();
+    const isRanged = cls === 'archer' || cls === 'mage';
+    const maxDist = isRanged ? 14 : 3.5;
+
+    let nearest: Monster3D | null = null;
+    let nearestDist = maxDist;
+    for (const m of this.monsters) {
+      if (m.state === 'dead') continue;
+      const d = this.playerPos.distanceTo(m.pos);
+      if (d < nearestDist) { nearest = m; nearestDist = d; }
+    }
+    if (!nearest) return;
+
+    import('../systems/SoundSystem').then(mod => mod.getSoundSystem().playAttack()).catch(() => {});
+
+    if (isRanged) {
+      // Ranged: spawn projectile
+      const projColor = cls === 'mage' ? 0x8833ff : 0xddaa44;
+      const geo = cls === 'mage'
+        ? new THREE.SphereGeometry(0.18, 8, 8)
+        : new THREE.CylinderGeometry(0.04, 0.04, 0.55, 6);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: projColor }));
+      mesh.position.copy(this.playerPos).setY(1.5);
+      this.scene.add(mesh);
+      const isCrit = Math.random() < 0.22;
+      const dmg = Math.max(1, Math.floor(this.playerStats.atk * (1 + Math.random() * 0.5)) - nearest.def) * (isCrit ? 2 : 1);
+      this.projectiles.push({ mesh, target: nearest, speed: 18, dmg });
+      this.playerMesh.rotation.y = Math.atan2(nearest.pos.x - this.playerPos.x, nearest.pos.z - this.playerPos.z);
+      this.addLog(isCrit ? `⚡ CRÍTICO! -${dmg} em ${nearest.name}!` : `🏹 -${dmg} em ${nearest.name}`);
+    } else {
+      // Melee: existing logic
+      const m = nearest;
+      if (!m.aggroed) m.aggroed = true;
+      this.attacking = true; this.attackAnim = 0;
+      this.attackTarget = m.pos.clone().add(new THREE.Vector3(0, 0.8, 0));
+      const isCrit = Math.random() < 0.22;
+      const dmg = Math.max(1, Math.floor(this.playerStats.atk * (1 + Math.random() * 0.5)) - m.def) * (isCrit ? 2 : 1);
+      m.hp = Math.max(0, m.hp - dmg); m.hitFlashTimer = isCrit ? 0.35 : 0.18;
+      const col = isCrit ? '#ffd700' : '#ff4444';
+      if (isCrit) {
+        this.triggerCameraShake(0.25);
+        for (let k = 0; k < 3; k++) this.spawnHitEffect(m.pos.clone().add(new THREE.Vector3((Math.random()-0.5)*1.2, k*0.4+0.3, (Math.random()-0.5)*1.2)), CLASS_COLORS[this.playerStats.className]);
+      } else {
+        this.spawnHitEffect(m.pos.clone().add(new THREE.Vector3(0, 0.6, 0)), CLASS_COLORS[this.playerStats.className]);
+      }
+      this.spawnDmgNumber(m.pos.clone().add(new THREE.Vector3(0, 2, 0)), dmg, col);
+      this.addLog(isCrit ? `⚡ CRÍTICO! -${dmg} em ${m.name}!` : `⚔️ -${dmg} em ${m.name}`);
+      if (m.hp <= 0) this.killMonster(m);
+    }
   }
 
   killMonster(m: Monster3D) {
@@ -2413,6 +2573,15 @@ export class GameEngine {
         if (rp) rp.zone = msg.zone as ZoneId;
       } else if (msg.type === 'chat') {
         this.addLog(`💬 ${msg.name as string}: ${msg.msg as string}`);
+        this.onChat?.(msg.name as string, msg.msg as string);
+      } else if (msg.type === 'clan_chat') {
+        this.onClanChat?.(msg.from as string, msg.text as string);
+      } else if (msg.type === 'clan_update') {
+        this.onClanUpdate?.(msg.clan);
+      } else if (msg.type === 'clan_members') {
+        this.onClanMembers?.(msg.members as any[]);
+      } else if (msg.type === 'clan_invited') {
+        this.onClanUpdate?.(msg.clan);
       } else if (msg.type === 'player_attack') {
         this.addLog(`⚔️ ${msg.name as string} atacou!`);
       } else if (msg.type === 'gm_give') {
@@ -2455,6 +2624,36 @@ export class GameEngine {
   sendChat(msg: string) {
     if (this.multiConnected && this.multiWs && this.multiWs.readyState === 1) {
       this.multiWs.send(JSON.stringify({ type: 'chat', msg }));
+    }
+  }
+
+  sendClanChat(text: string) {
+    if (this.multiWs?.readyState === 1) {
+      this.multiWs.send(JSON.stringify({ type: 'clan_chat', text }));
+    }
+  }
+
+  inviteToClan(username: string) {
+    if (this.multiWs?.readyState === 1) {
+      this.multiWs.send(JSON.stringify({ type: 'clan_invite', target: username }));
+    }
+  }
+
+  kickFromClan(username: string) {
+    if (this.multiWs?.readyState === 1) {
+      this.multiWs.send(JSON.stringify({ type: 'clan_kick', target: username }));
+    }
+  }
+
+  leaveClan() {
+    if (this.multiWs?.readyState === 1) {
+      this.multiWs.send(JSON.stringify({ type: 'clan_leave' }));
+    }
+  }
+
+  createClan(name: string) {
+    if (this.multiWs?.readyState === 1) {
+      this.multiWs.send(JSON.stringify({ type: 'clan_create', name }));
     }
   }
 
