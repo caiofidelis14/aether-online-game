@@ -458,6 +458,23 @@ wss.on('connection', (ws, req) => {
           }
           ws.send(JSON.stringify({ type: 'clan_members', members: cmMembers.map(n => ({ name: n, online: cmOnline.has(n) })), clanName: joinAcc.clan.name, leader: joinAcc.clan.leader }));
         }
+
+        // ── Daily login reward (server-authoritative, escalating streak) ──
+        if (player.authed && player.accountKey) {
+          const accs = loadAccounts();
+          const a = accs[player.accountKey];
+          if (a) {
+            const today = new Date().toISOString().slice(0, 10);
+            if (a.lastDaily !== today) {
+              const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+              a.dailyStreak = a.lastDaily === yesterday ? (a.dailyStreak || 0) + 1 : 1;
+              a.lastDaily = today;
+              saveAccounts(accs);
+              const reward = 200 + Math.min(a.dailyStreak - 1, 6) * 100; // 200→800 by 7-day streak
+              setTimeout(() => ws.send(JSON.stringify({ type: 'gm_give', gold: reward, msg: `🎁 Recompensa diária! Login dia ${a.dailyStreak}: +${reward}G` })), 2000);
+            }
+          }
+        }
         break;
       }
 
