@@ -96,3 +96,18 @@ export async function apiDeleteCharacter(token: string, charId: string): Promise
   });
   if (!res.ok) throw new Error('Erro ao deletar personagem.');
 }
+
+export interface LeaderEntry {
+  name: string; owner: string; clan: string | null; class: string;
+  level: number; kills: number; bossKills: number; gold: number; online: boolean;
+}
+export interface Leaderboard {
+  byLevel: LeaderEntry[]; byKills: LeaderEntry[]; byGold: LeaderEntry[];
+  total: number; online: number;
+}
+
+export async function apiLeaderboard(): Promise<Leaderboard> {
+  const res = await fetch(`${getApiBase()}/api/leaderboard`);
+  if (!res.ok) throw new Error('Erro ao carregar ranking.');
+  return res.json();
+}

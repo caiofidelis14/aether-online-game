@@ -10,6 +10,7 @@ import { generateQuestBoard, type Quest, DIFFICULTY_COLOR, DIFFICULTY_LABEL } fr
 import { QUESTS, type QuestProgress } from '../game/data/quests';
 import { formatPlayTime, type CharacterSave } from '../game/systems/SaveSystem';
 import { SKINS } from '../game/data/skins';
+import { apiLeaderboard, type Leaderboard, type LeaderEntry } from '../api';
 
 function skillsArray(tree: SkillTree): Skill[] { return Object.values(tree); }
 
@@ -491,6 +492,9 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [bloomOn, setBloomOn] = useState(() => { try { return localStorage.getItem('aether_bloom_v1') !== '0'; } catch { return true; } });
   const [showClan, setShowClan] = useState(false);
+  const [showRanking, setShowRanking] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<Leaderboard | null>(null);
+  const [rankTab, setRankTab] = useState<'byLevel' | 'byKills' | 'byGold'>('byLevel');
   const [showAchievements, setShowAchievements] = useState(false);
   const [unlockedAchievements, setUnlockedAchievements] = useState<Record<string, boolean>>({});
   const [achievementToast, setAchievementToast] = useState<{ id: string; name: string } | null>(null);
@@ -530,6 +534,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
       if (k === 'j') { setShowQuests(p => !p); setShowMap(false); setShowInventory(false); setShowProfile(false); }
       if (k === 'k') setShowSkills(p => !p);
       if (k === 'v') setShowAchievements(p => !p);
+      if (k === 'l') { setShowRanking(p => !p); apiLeaderboard().then(setLeaderboard).catch(() => {}); }
       if (k === 'escape') { setShowInventory(false); setShowMap(false); setShowProfile(false); setShowSkills(false); setShowNPC(null); setShowQuests(false); }
       if (k === 'e') engine?.attackNearMonster();
       if (k === 'r') engine?.toggleAutoPlay();
@@ -888,7 +893,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
           );
         })}
         {/* Panel buttons */}
-        {([['K', '📋', () => setShowSkills(p => !p), showSkills], ['J', '📜', () => setShowQuests(p => !p), showQuests], ['I', '🎒', () => setShowInventory(p => !p), showInventory], ['M', '🗺️', () => setShowMap(p => !p), showMap], ['P', '👤', () => setShowProfile(p => !p), showProfile], ['C', '⚔️', () => { setShowClan(p => !p); if (!showClan && engine?.multiWs?.readyState === 1) engine.multiWs.send(JSON.stringify({type: 'clan_members_request'})); }, showClan], ['V', '🏆', () => setShowAchievements(p => !p), showAchievements]] as [string, string, () => void, boolean][]).map(([key, icon, fn, active]) => (
+        {([['K', '📋', () => setShowSkills(p => !p), showSkills], ['J', '📜', () => setShowQuests(p => !p), showQuests], ['I', '🎒', () => setShowInventory(p => !p), showInventory], ['M', '🗺️', () => setShowMap(p => !p), showMap], ['P', '👤', () => setShowProfile(p => !p), showProfile], ['C', '⚔️', () => { setShowClan(p => !p); if (!showClan && engine?.multiWs?.readyState === 1) engine.multiWs.send(JSON.stringify({type: 'clan_members_request'})); }, showClan], ['V', '🏆', () => setShowAchievements(p => !p), showAchievements], ['L', '📊', () => { setShowRanking(p => !p); if (!showRanking) apiLeaderboard().then(setLeaderboard).catch(() => {}); }, showRanking]] as [string, string, () => void, boolean][]).map(([key, icon, fn, active]) => (
           <button key={key} onClick={fn} style={{ width: 50, height: 50, background: active ? 'rgba(155,89,182,0.3)' : 'rgba(255,255,255,0.05)', border: `2px solid ${active ? '#9b59b6' : 'rgba(255,255,255,0.1)'}`, borderRadius: 10, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 18 }}>
             {icon}<span style={{ fontSize: 7, color: '#9b59b6' }}>{key}</span>
           </button>
@@ -973,6 +978,45 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
       )}
 
       {/* PANELS */}
+      {showRanking && (
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 420, maxWidth: '94vw', maxHeight: '78vh', overflowY: 'auto', background: 'linear-gradient(135deg, rgba(8,4,20,0.98), rgba(15,8,35,0.98))', border: '1px solid rgba(255,215,0,0.3)', borderRadius: 16, padding: 20, zIndex: 200, backdropFilter: 'blur(20px)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            <div style={{ color: '#ffd700', fontWeight: 800, fontSize: 16 }}>📊 Ranking Global {leaderboard && <span style={{ fontSize: 11, color: '#666', fontWeight: 400 }}>· {leaderboard.online} online · {leaderboard.total} heróis</span>}</div>
+            <button onClick={() => setShowRanking(false)} style={{ background: 'none', border: 'none', color: '#666', fontSize: 18, cursor: 'pointer' }}>✕</button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
+            {([['byLevel', '⭐ Nível'], ['byKills', '🗡️ Abates'], ['byGold', '💰 Ouro']] as [typeof rankTab, string][]).map(([tab, label]) => (
+              <button key={tab} onClick={() => setRankTab(tab)} style={{ flex: 1, padding: '6px', background: rankTab === tab ? 'rgba(255,215,0,0.2)' : 'rgba(255,255,255,0.05)', border: `1px solid ${rankTab === tab ? 'rgba(255,215,0,0.5)' : 'rgba(255,255,255,0.08)'}`, borderRadius: 8, color: rankTab === tab ? '#ffd700' : '#aaa', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>{label}</button>
+            ))}
+          </div>
+          {!leaderboard ? (
+            <div style={{ textAlign: 'center', color: '#666', fontSize: 12, padding: 20 }}>Carregando ranking…</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {(leaderboard[rankTab] as LeaderEntry[]).map((e, i) => {
+                const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+                const stat = rankTab === 'byLevel' ? `Nv.${e.level}` : rankTab === 'byKills' ? `${e.kills} abates` : `${e.gold.toLocaleString()}G`;
+                const isMe = e.name === (save?.name ?? '');
+                return (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 12px', background: isMe ? 'rgba(255,215,0,0.12)' : i < 3 ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.02)', border: `1px solid ${isMe ? 'rgba(255,215,0,0.4)' : 'rgba(255,255,255,0.05)'}`, borderRadius: 8 }}>
+                    <span style={{ width: 28, textAlign: 'center', fontSize: i < 3 ? 18 : 12, fontWeight: 700, color: '#aaa' }}>{medal}</span>
+                    <span style={{ fontSize: 18 }}>{CLASS_ICONS[e.class as ClassName] ?? '🧙'}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: isMe ? '#ffd700' : '#fff', display: 'flex', alignItems: 'center', gap: 5 }}>
+                        {e.name}
+                        {e.online && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#4caf50', display: 'inline-block' }} />}
+                        {e.clan && <span style={{ fontSize: 9, color: '#9b59b6' }}>⚔️{e.clan}</span>}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 12, fontWeight: 800, color: '#ffd700' }}>{stat}</span>
+                  </div>
+                );
+              })}
+              {(leaderboard[rankTab] as LeaderEntry[]).length === 0 && <div style={{ textAlign: 'center', color: '#666', fontSize: 12, padding: 20 }}>Nenhum herói ainda.</div>}
+            </div>
+          )}
+        </div>
+      )}
       {showAchievements && (
         <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: 340, maxHeight: '70vh', overflowY: 'auto', background: 'linear-gradient(135deg, rgba(8,4,20,0.97), rgba(15,8,35,0.97))', border: '1px solid rgba(255,215,0,0.3)', borderRadius: 16, padding: 20, zIndex: 200, backdropFilter: 'blur(20px)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>

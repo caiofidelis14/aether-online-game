@@ -288,6 +288,34 @@ ${url ? `<p>URL atual:</p><a href="${url}" target="_blank">${url}</a>
     return;
   }
 
+  // ── GET /api/leaderboard ───────────────────────────────────────────────────
+  if (req.method === 'GET' && path === '/api/leaderboard') {
+    const accounts = loadAccounts();
+    const all = [];
+    for (const acc of Object.values(accounts)) {
+      for (const c of (acc.characters || [])) {
+        all.push({
+          name: c.name || '???',
+          owner: acc.username || '',
+          clan: acc.clan?.name || null,
+          class: c.class || 'warrior',
+          level: Number(c.level) || 1,
+          kills: Number(c.kills) || 0,
+          bossKills: Number(c.bossKills) || 0,
+          gold: Number(c.gold) || 0,
+        });
+      }
+    }
+    const onlineNames = new Set([...players.values()].map(p => p.name));
+    const rank = (arr) => arr.map(e => ({ ...e, online: onlineNames.has(e.name) }));
+    const byLevel = rank([...all].sort((a, b) => b.level - a.level || b.kills - a.kills).slice(0, 20));
+    const byKills = rank([...all].sort((a, b) => b.kills - a.kills || b.level - a.level).slice(0, 20));
+    const byGold  = rank([...all].sort((a, b) => b.gold - a.gold).slice(0, 20));
+    res.writeHead(200, { 'Content-Type': 'application/json', ...CORS });
+    res.end(JSON.stringify({ byLevel, byKills, byGold, total: all.length, online: players.size }));
+    return;
+  }
+
   // ── GET /api/status ──────────────────────────────────────────────────────
   if (path === '/api/status') {
     const url = getTunnelUrl();
