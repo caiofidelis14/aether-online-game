@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import type { ClassName } from '../data/classes';
 import { rollDrops, type LootItem, RARITY_COLORS } from '../data/loot';
 import { QUESTS, QUEST_ORDER, type QuestProgress } from '../data/quests';
@@ -187,6 +190,7 @@ function makeNameSprite(name: string, cls: string, isLocal = false): THREE.Sprit
 export class GameEngine {
   canvas: HTMLCanvasElement; minimapCanvas: HTMLCanvasElement;
   renderer!: THREE.WebGLRenderer; scene!: THREE.Scene; camera!: THREE.PerspectiveCamera;
+  composer: EffectComposer | null = null; bloomPass: UnrealBloomPass | null = null; bloomEnabled = true;
   clock = new THREE.Clock(); sun!: THREE.DirectionalLight;
   ambient!: THREE.AmbientLight; hemi!: THREE.HemisphereLight;
   streetLights: THREE.PointLight[] = []; playerLight!: THREE.PointLight;
@@ -349,6 +353,21 @@ export class GameEngine {
 
     this.camera = new THREE.PerspectiveCamera(48, this.canvas.clientWidth / this.canvas.clientHeight, 0.1, 600);
     this.setCamPos();
+
+    // ── Post-processing: bloom for that AAA glow on portals, magic, lava, emissive gear ──
+    try {
+      const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+      this.composer = new EffectComposer(this.renderer);
+      this.composer.addPass(new RenderPass(this.scene, this.camera));
+      this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.55, 0.5, 0.82);
+      this.composer.addPass(this.bloomPass);
+      this.composer.setSize(w, h);
+      const savedBloom = localStorage.getItem('aether_bloom_v1');
+      if (savedBloom === '0') this.bloomEnabled = false;
+    } catch (e) {
+      console.warn('Bloom unavailable, falling back to direct render', e);
+      this.composer = null;
+    }
 
     // Lighting
     this.ambient = new THREE.AmbientLight(0x404090, 0.9); this.scene.add(this.ambient);
@@ -1436,7 +1455,7 @@ export class GameEngine {
       }
       this.handleClick();
     });
-    window.addEventListener('resize', () => { const w = this.canvas.clientWidth; const h = this.canvas.clientHeight; this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.renderer.setSize(w, h); });
+    window.addEventListener('resize', () => { const w = this.canvas.clientWidth; const h = this.canvas.clientHeight; this.camera.aspect = w / h; this.camera.updateProjectionMatrix(); this.renderer.setSize(w, h); this.composer?.setSize(w, h); });
   }
 
   handleClick() {
@@ -1456,7 +1475,8 @@ export class GameEngine {
     this.animFrame = requestAnimationFrame(() => this.loop());
     const dt = Math.min(this.clock.getDelta(), 0.05);
     this.update(dt);
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer && this.bloomEnabled) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
     this.drawMinimap();
   }
 
@@ -2402,6 +2422,11 @@ export class GameEngine {
     const ex = this.inventory.find(i => i.name === item.name);
     if (ex) ex.qty++;
     else this.inventory.push({ ...item, qty: 1 });
+  }
+
+  setBloom(on: boolean) {
+    this.bloomEnabled = on;
+    try { localStorage.setItem('aether_bloom_v1', on ? '1' : '0'); } catch { /* ignore */ }
   }
 
   sortInventory() {

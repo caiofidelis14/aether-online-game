@@ -489,6 +489,7 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
   const [showProfile, setShowProfile] = useState(false);
   const [showQuests, setShowQuests] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [bloomOn, setBloomOn] = useState(() => { try { return localStorage.getItem('aether_bloom_v1') !== '0'; } catch { return true; } });
   const [showClan, setShowClan] = useState(false);
   const [showAchievements, setShowAchievements] = useState(false);
   const [unlockedAchievements, setUnlockedAchievements] = useState<Record<string, boolean>>({});
@@ -723,6 +724,10 @@ export default function GameHUD({ state, engine, save, onBack }: HUDProps) {
                 <input type="range" min={0} max={100} value={Math.round(sfxVol * 100)} onChange={e => { const v = +e.target.value / 100; setSfxVol(v); try { getSoundSystem().setSfxVolume(v); } catch { /* ignore */ } }} style={{ width: '100%', accentColor: '#e74c3c' }} />
               </div>
               <div style={{ height: 1, background: 'rgba(255,255,255,0.08)', marginBottom: 14 }} />
+              {/* Bloom toggle (desligar p/ GPU fraca) */}
+              <button onClick={() => { const next = !bloomOn; setBloomOn(next); engine?.setBloom(next); }} style={{ width: '100%', padding: '8px', background: bloomOn ? 'rgba(155,89,182,0.18)' : 'rgba(255,255,255,0.07)', border: `1px solid ${bloomOn ? 'rgba(155,89,182,0.5)' : 'rgba(255,255,255,0.12)'}`, borderRadius: 8, color: '#ccc', fontSize: 11, cursor: 'pointer', marginBottom: 10 }}>
+                ✨ Brilho (Bloom): {bloomOn ? 'LIGADO' : 'DESLIGADO'}
+              </button>
               {/* Fullscreen */}
               <button onClick={() => { if (!document.fullscreenElement) document.documentElement.requestFullscreen(); else document.exitFullscreen(); }} style={{ width: '100%', padding: '8px', background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 8, color: '#ccc', fontSize: 11, cursor: 'pointer', marginBottom: 10 }}>
                 {document.fullscreenElement ? '⛶ Sair da Tela Cheia' : '⛶ Tela Cheia'}
